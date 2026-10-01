@@ -2,22 +2,579 @@
  * Certify — Minimal Client-Side Bulk Certificate Generator
  * 
  * Architecture:
+ * - StorageDB: IndexedDB wrapper for large binary template image storage
+ * - AppState: Central application state schema & metadata
+ * - HistoryManager: 100-state undo/redo for editor changes with smart grouping & keyboard shortcuts
+ * - NavigationManager: Application page router (upload <-> editor <-> preview) with browser History API
+ * - SessionManager: Auto-persistence to localStorage + IndexedDB with debouncing & status indicator
+ * - RestartManager: Safe start-over flow with confirmation dialog & selective storage wipe
+ * - FontManager: Google Fonts list, categorization, search, and dynamic loading
  * - TemplateManager: Template image loading and aspect ratio calculations
  * - FieldManager: Field definitions, normalized coordinates, and state
- * - FontManager: Google Fonts list, categorization, search, and dynamic loading
  * - Editor: Interactive workspace, drag-and-drop, resize handles, rotation, keyboard controls
  * - ExcelManager: File parsing via SheetJS (.xlsx, .xls, .csv)
- * - MappingManager: Auto-matching columns with fuzzy aliases and fallback modal
- * - CertificateRenderer: Pixel-perfect unified HTML5 Canvas rendering engine (Auto-Fit, text alignment, rotation, letter spacing)
+ * - MappingManager: Auto-matching columns with fuzzy aliases and modal
+ * - CertificateRenderer: Pixel-perfect unified HTML5 Canvas rendering engine
  * - PreviewManager: Single Preview & Grid View, pagination, jump-to, error inspection
  * - PDFExporter: High-resolution PDF generation matching template dimensions using jsPDF
  * - ZipExporter: Bulk packaging into ZIP using JSZip with live progress tracking
- * - ModalManager: Dialogs for confirmation, column mapping, export, and reset
+ * - ModalManager: Dialogs for confirmation, column mapping, export, restart, and recovery
  * - App: Main controller wiring the complete workflow
  */
 
 // ============================================================================
-// 1. FONT MANAGER (27 Legal Google Fonts in 4 Categories)
+// 1. STORAGE DB (IndexedDB for Large Binary Assets)
+// ============================================================================
+const StorageDB = {
+  dbName: 'CertifyDB',
+  version: 1,
+  storeName: 'assets',
+  db: null,
+
+  async getDB() {
+    if (this.db) return this.db;
+    return new Promise((resolve, reject) => {
+      if (!window.indexedDB) {
+        return reject(new Error('IndexedDB not supported'));
+      }
+      const request = indexedDB.open(this.dbName, this.version);
+      request.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(this.storeName)) {
+          db.createObjectStore(this.storeName);
+        }
+      };
+      request.onsuccess = (e) => {
+        this.db = e.target.result;
+        resolve(this.db);
+      };
+      request.onerror = (e) => reject(e.target.error);
+    });
+  },
+
+  async set(key, value) {
+    try {
+      const db = await this.getDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(this.storeName, 'readwrite');
+        tx.objectStore(this.storeName).put(value, key);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = (e) => reject(e.target.error);
+      });
+    } catch (err) {
+      console.warn('StorageDB set failed:', err);
+      return false;
+    }
+  },
+
+  async get(key) {
+    try {
+      const db = await this.getDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(this.storeName, 'readonly');
+        const req = tx.objectStore(this.storeName).get(key);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = (e) => reject(e.target.error);
+      });
+    } catch (err) {
+      console.warn('StorageDB get failed:', err);
+      return null;
+    }
+  },
+
+  async delete(key) {
+    try {
+      const db = await this.getDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(this.storeName, 'readwrite');
+        tx.objectStore(this.storeName).delete(key);
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = (e) => reject(e.target.error);
+      });
+    } catch (err) {
+      console.warn('StorageDB delete failed:', err);
+      return false;
+    }
+  },
+
+  async clear() {
+    try {
+      const db = await this.getDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(this.storeName, 'readwrite');
+        tx.objectStore(this.storeName).clear();
+        tx.oncomplete = () => resolve(true);
+        tx.onerror = (e) => reject(e.target.error);
+      });
+    } catch (err) {
+      console.warn('StorageDB clear failed:', err);
+      return false;
+    }
+  }
+};
+
+// ============================================================================
+// 2. CENTRAL APP STATE SCHEMA
+// ============================================================================
+const AppState = {
+  version: 1,
+  STORAGE_KEY: 'certify_session',
+  ASSET_KEY: 'template_image'
+};
+
+// ============================================================================
+// 3. HISTORY MANAGER (Undo / Redo System)
+// ============================================================================
+const HistoryManager = {
+  undoStack: [],
+  redoStack: [],
+  maxStates: 100,
+  dragStartSnapshot: null,
+  isApplyingHistory: false,
+
+  captureState() {
+    return {
+      fields: JSON.parse(JSON.stringify(FieldManager.fields)),
+      selectedFieldId: FieldManager.selectedFieldId
+    };
+  },
+
+  applyState(snapshot) {
+    if (!snapshot) return;
+    this.isApplyingHistory = true;
+    try {
+      FieldManager.fields = JSON.parse(JSON.stringify(snapshot.fields || []));
+      FieldManager.selectedFieldId = snapshot.selectedFieldId || null;
+
+      // Re-render field elements in editor
+      Editor.clearAllFieldElements();
+      FieldManager.fields.forEach(f => Editor.renderFieldElement(f));
+      Editor.onFieldSelectionChanged();
+
+      this.updateUI();
+      SessionManager.scheduleSave();
+    } finally {
+      this.isApplyingHistory = false;
+    }
+  },
+
+  recordAction(actionFn) {
+    if (this.isApplyingHistory) {
+      actionFn();
+      return;
+    }
+    const beforeSnapshot = this.captureState();
+    actionFn();
+    this.undoStack.push(beforeSnapshot);
+    if (this.undoStack.length > this.maxStates) {
+      this.undoStack.shift();
+    }
+    this.redoStack = [];
+    this.updateUI();
+    SessionManager.scheduleSave();
+  },
+
+  pushState(beforeSnapshot) {
+    if (this.isApplyingHistory) return;
+    const stateToPush = beforeSnapshot || this.captureState();
+    this.undoStack.push(stateToPush);
+    if (this.undoStack.length > this.maxStates) {
+      this.undoStack.shift();
+    }
+    this.redoStack = [];
+    this.updateUI();
+    SessionManager.scheduleSave();
+  },
+
+  undo() {
+    if (!this.canUndo()) return;
+    const currentState = this.captureState();
+    const previousState = this.undoStack.pop();
+    this.redoStack.push(currentState);
+    this.applyState(previousState);
+  },
+
+  redo() {
+    if (!this.canRedo()) return;
+    const currentState = this.captureState();
+    const nextState = this.redoStack.pop();
+    this.undoStack.push(currentState);
+    this.applyState(nextState);
+  },
+
+  canUndo() {
+    return this.undoStack.length > 0;
+  },
+
+  canRedo() {
+    return this.redoStack.length > 0;
+  },
+
+  clear() {
+    this.undoStack = [];
+    this.redoStack = [];
+    this.dragStartSnapshot = null;
+    this.updateUI();
+  },
+
+  updateUI() {
+    const btnUndo = document.getElementById('btn-undo');
+    const btnRedo = document.getElementById('btn-redo');
+    if (btnUndo) {
+      btnUndo.disabled = !this.canUndo();
+    }
+    if (btnRedo) {
+      btnRedo.disabled = !this.canRedo();
+    }
+  },
+
+  initKeyboard() {
+    window.addEventListener('keydown', (e) => {
+      // Preserve native undo behavior in text inputs, textareas, selects, or contenteditable
+      const tag = document.activeElement ? document.activeElement.tagName : '';
+      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || document.activeElement?.isContentEditable) {
+        return;
+      }
+
+      // Only handle editor undo shortcuts when in editor
+      if (NavigationManager.currentPage !== 'editor') return;
+
+      const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+      const isCmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
+
+      if (isCmdOrCtrl && !e.altKey) {
+        if (e.key === 'z' || e.key === 'Z') {
+          e.preventDefault();
+          if (e.shiftKey) {
+            this.redo();
+          } else {
+            this.undo();
+          }
+        } else if (e.key === 'y' || e.key === 'Y') {
+          e.preventDefault();
+          this.redo();
+        }
+      }
+    });
+  }
+};
+
+// ============================================================================
+// 4. NAVIGATION MANAGER (Decoupled SPA Page Router & Browser History)
+// ============================================================================
+const NavigationManager = {
+  currentPage: 'upload', // 'upload' | 'editor' | 'preview'
+
+  init() {
+    // Listen for browser native back / forward buttons
+    window.addEventListener('popstate', (e) => {
+      if (e.state && e.state.page) {
+        this.renderPage(e.state.page, false);
+      } else {
+        this.renderPage('upload', false);
+      }
+    });
+  },
+
+  goTo(page) {
+    if (this.currentPage === page) return;
+    this.renderPage(page, true);
+  },
+
+  replace(page) {
+    this.currentPage = page;
+    try {
+      history.replaceState({ page }, '', '');
+    } catch (_) {}
+    this.updateDOMView(page);
+    SessionManager.scheduleSave();
+  },
+
+  renderPage(page, pushHistory = true) {
+    // Safety guards against invalid navigation
+    if (page === 'preview' && (!ExcelManager.isLoaded() || !TemplateManager.isLoaded())) {
+      page = TemplateManager.isLoaded() ? 'editor' : 'upload';
+    }
+    if (page === 'editor' && !TemplateManager.isLoaded()) {
+      page = 'upload';
+    }
+
+    this.currentPage = page;
+    if (pushHistory) {
+      try {
+        history.pushState({ page }, '', '');
+      } catch (_) {}
+    }
+
+    this.updateDOMView(page);
+    SessionManager.scheduleSave();
+  },
+
+  back() {
+    if (this.currentPage === 'preview') {
+      this.goTo('editor');
+    } else if (this.currentPage === 'editor') {
+      this.goTo('upload');
+    }
+  },
+
+  updateDOMView(page) {
+    const states = {
+      'upload': 'state-upload',
+      'editor': 'state-editor',
+      'preview': 'state-preview'
+    };
+
+    Object.entries(states).forEach(([p, elementId]) => {
+      const el = document.getElementById(elementId);
+      if (el) {
+        if (p === page) {
+          el.classList.remove('hidden');
+        } else {
+          el.classList.add('hidden');
+        }
+      }
+    });
+
+    if (page === 'editor') {
+      setTimeout(() => Editor.resizeStage(), 50);
+    }
+  }
+};
+
+// ============================================================================
+// 5. SESSION MANAGER (Debounced Auto-Save & Full Restoration)
+// ============================================================================
+const SessionManager = {
+  saveTimer: null,
+  isRestoring: false,
+
+  setIndicator(status) {
+    const indEditor = document.getElementById('session-save-indicator');
+    const indPreview = document.getElementById('preview-save-indicator');
+    if (indEditor) indEditor.textContent = status;
+    if (indPreview) indPreview.textContent = status;
+  },
+
+  scheduleSave() {
+    if (this.isRestoring) return;
+    this.setIndicator('Saving...');
+
+    if (this.saveTimer) {
+      clearTimeout(this.saveTimer);
+    }
+
+    this.saveTimer = setTimeout(() => {
+      this.saveNow();
+    }, 400);
+  },
+
+  async saveNow() {
+    if (this.isRestoring) return;
+    try {
+      const sessionData = {
+        version: AppState.version,
+        updatedAt: new Date().toISOString(),
+        page: NavigationManager.currentPage,
+        template: {
+          name: TemplateManager.fileName || 'template.png',
+          naturalWidth: TemplateManager.naturalWidth,
+          naturalHeight: TemplateManager.naturalHeight,
+          aspectRatio: TemplateManager.aspectRatio
+        },
+        fields: FieldManager.fields,
+        selectedFieldId: FieldManager.selectedFieldId,
+        fieldCounter: FieldManager.counter,
+        excel: {
+          fileName: ExcelManager.fileName,
+          headers: ExcelManager.headers,
+          rows: ExcelManager.rows
+        },
+        mappings: MappingManager.mappings,
+        preview: {
+          currentIndex: PreviewManager.currentIndex,
+          viewMode: PreviewManager.viewMode
+        }
+      };
+
+      // 1. Save metadata in localStorage
+      localStorage.setItem(AppState.STORAGE_KEY, JSON.stringify(sessionData));
+
+      // 2. Save template binary asset in IndexedDB if available
+      if (TemplateManager.src) {
+        await StorageDB.set(AppState.ASSET_KEY, TemplateManager.src);
+      }
+
+      this.setIndicator('Saved');
+    } catch (err) {
+      console.warn('Could not save session locally:', err);
+      this.setIndicator('Saved locally');
+      // Graceful fallback: continue working in memory
+    }
+  },
+
+  async restore() {
+    const rawData = localStorage.getItem(AppState.STORAGE_KEY);
+    if (!rawData) return false;
+
+    this.isRestoring = true;
+    try {
+      const session = JSON.parse(rawData);
+
+      // Versioning check
+      if (!session || session.version !== AppState.version) {
+        App.showToast('This saved session is no longer compatible. Starting fresh.', 'info');
+        localStorage.removeItem(AppState.STORAGE_KEY);
+        await StorageDB.clear();
+        return false;
+      }
+
+      // Check if template was saved
+      const hasTemplateMeta = session.template && session.template.naturalWidth > 0;
+      let templateSrc = null;
+
+      if (hasTemplateMeta) {
+        templateSrc = await StorageDB.get(AppState.ASSET_KEY);
+        if (!templateSrc) {
+          // Template missing: prompt user with recovery modal
+          ModalManager.open('modal-recovery');
+          return false;
+        }
+      }
+
+      // Restore template if available
+      if (templateSrc) {
+        TemplateManager.fileName = session.template.name || 'template.png';
+        await TemplateManager.loadFromSrc(templateSrc);
+        Editor.setupTemplate(TemplateManager.image);
+      }
+
+      // Restore fields
+      FieldManager.fields = session.fields || [];
+      FieldManager.counter = session.fieldCounter || (FieldManager.fields.length + 1);
+      FieldManager.selectedFieldId = session.selectedFieldId || null;
+
+      if (TemplateManager.isLoaded()) {
+        Editor.clearAllFieldElements();
+        FieldManager.fields.forEach(f => Editor.renderFieldElement(f));
+        Editor.onFieldSelectionChanged();
+      }
+
+      // Restore Excel data
+      if (session.excel && session.excel.rows && session.excel.rows.length > 0) {
+        ExcelManager.fileName = session.excel.fileName || 'participants.xlsx';
+        ExcelManager.headers = session.excel.headers || [];
+        ExcelManager.rows = session.excel.rows || [];
+
+        // Update Excel badge
+        const badge = document.getElementById('excel-loaded-badge');
+        const uploadBtn = document.getElementById('btn-upload-excel');
+        const fnText = document.getElementById('excel-filename-text');
+        const rcText = document.getElementById('excel-row-count-text');
+
+        if (badge) {
+          badge.classList.remove('hidden');
+          badge.classList.add('flex');
+        }
+        if (uploadBtn) uploadBtn.classList.add('hidden');
+        if (fnText) fnText.textContent = ExcelManager.fileName;
+        if (rcText) rcText.textContent = `(${ExcelManager.rows.length})`;
+      }
+
+      // Restore column mappings
+      MappingManager.mappings = session.mappings || {};
+
+      // Restore Page and View
+      const targetPage = session.page || 'editor';
+      if (targetPage === 'preview' && ExcelManager.isLoaded() && TemplateManager.isLoaded()) {
+        PreviewManager.setup(ExcelManager.rows);
+        if (session.preview) {
+          if (typeof session.preview.currentIndex === 'number') {
+            PreviewManager.navigate(session.preview.currentIndex);
+          }
+          if (session.preview.viewMode) {
+            PreviewManager.setViewMode(session.preview.viewMode);
+          }
+        }
+        NavigationManager.replace('preview');
+      } else if (targetPage === 'editor' && TemplateManager.isLoaded()) {
+        NavigationManager.replace('editor');
+      } else {
+        NavigationManager.replace('upload');
+      }
+
+      // Initialize clean history baseline
+      HistoryManager.clear();
+      this.setIndicator('Saved');
+      return true;
+    } catch (err) {
+      console.warn('Session restoration failed:', err);
+      return false;
+    } finally {
+      this.isRestoring = false;
+    }
+  }
+};
+
+// ============================================================================
+// 6. RESTART MANAGER (Clean Start-Over Workflow)
+// ============================================================================
+const RestartManager = {
+  requestRestart() {
+    ModalManager.open('modal-restart');
+  },
+
+  async confirmRestart() {
+    ModalManager.close('modal-restart');
+
+    // 1. Remove only Certify's keys from localStorage (never localStorage.clear())
+    try {
+      localStorage.removeItem(AppState.STORAGE_KEY);
+    } catch (_) {}
+
+    // 2. Clear IndexedDB template asset
+    try {
+      await StorageDB.clear();
+    } catch (_) {}
+
+    // 3. Reset all managers
+    TemplateManager.reset();
+    FieldManager.clear();
+    ExcelManager.reset();
+    MappingManager.mappings = {};
+    HistoryManager.clear();
+    PreviewManager.participants = [];
+    PreviewManager.currentIndex = 0;
+    PreviewManager.failedIndices = [];
+    PreviewManager.cachedThumbnails = {};
+
+    // 4. Reset DOM badges and inputs
+    const excelBadge = document.getElementById('excel-loaded-badge');
+    if (excelBadge) {
+      excelBadge.classList.add('hidden');
+      excelBadge.classList.remove('flex');
+    }
+    const btnUploadExcel = document.getElementById('btn-upload-excel');
+    if (btnUploadExcel) btnUploadExcel.classList.remove('hidden');
+
+    const templateInput = document.getElementById('template-file-input');
+    if (templateInput) templateInput.value = '';
+
+    const excelInput = document.getElementById('excel-file-input');
+    if (excelInput) excelInput.value = '';
+
+    const templateDimBadge = document.getElementById('template-dim-badge');
+    if (templateDimBadge) templateDimBadge.textContent = '-- × -- px';
+
+    // 5. Navigate to upload screen
+    NavigationManager.replace('upload');
+    SessionManager.setIndicator('Saved');
+    App.showToast('Project reset successfully.');
+  }
+};
+
+// ============================================================================
+// 7. FONT MANAGER (27 Legal Google Fonts in 4 Categories)
 // ============================================================================
 const FontManager = {
   fonts: [
@@ -126,12 +683,14 @@ const FontManager = {
 
   selectFont(fontFamily) {
     const active = FieldManager.getSelectedField();
-    if (!active) return;
-    active.fontFamily = fontFamily;
-    document.getElementById('tb-current-font').textContent = fontFamily;
-    document.getElementById('tb-current-font').style.fontFamily = `'${fontFamily}', sans-serif`;
-    Editor.updateFieldElement(active);
-    Editor.updateToolbarValues(active);
+    if (!active || active.fontFamily === fontFamily) return;
+    HistoryManager.recordAction(() => {
+      active.fontFamily = fontFamily;
+      document.getElementById('tb-current-font').textContent = fontFamily;
+      document.getElementById('tb-current-font').style.fontFamily = `'${fontFamily}', sans-serif`;
+      Editor.updateFieldElement(active);
+      Editor.updateToolbarValues(active);
+    });
   },
 
   async ensureFontLoaded(fontFamily, fontWeight = 'normal', fontStyle = 'normal') {
@@ -139,18 +698,19 @@ const FontManager = {
       if (document.fonts && document.fonts.load) {
         await document.fonts.load(`${fontStyle} ${fontWeight} 16px "${fontFamily}"`);
       }
-    } catch (err) {
-      console.warn('Font load check warning:', err);
+    } catch {
+      // Font load handled gracefully
     }
   }
 };
 
 // ============================================================================
-// 2. TEMPLATE MANAGER
+// 8. TEMPLATE MANAGER
 // ============================================================================
 const TemplateManager = {
   image: null,
   src: null,
+  fileName: '',
   naturalWidth: 0,
   naturalHeight: 0,
   aspectRatio: 1.414,
@@ -161,6 +721,7 @@ const TemplateManager = {
         return reject(new Error("This file format isn't supported. Please upload a PNG, JPG, or JPEG image."));
       }
 
+      this.fileName = file.name;
       const reader = new FileReader();
       reader.onload = (e) => {
         this.loadFromSrc(e.target.result)
@@ -183,7 +744,7 @@ const TemplateManager = {
         this.naturalHeight = img.naturalHeight;
         this.aspectRatio = img.naturalWidth / img.naturalHeight;
         
-        // Update Template badge
+        // Update Template dimension badge
         const badge = document.getElementById('template-dim-badge');
         if (badge) {
           badge.textContent = `${img.naturalWidth} × ${img.naturalHeight} px`;
@@ -202,26 +763,25 @@ const TemplateManager = {
   reset() {
     this.image = null;
     this.src = null;
+    this.fileName = '';
     this.naturalWidth = 0;
     this.naturalHeight = 0;
   }
 };
 
 // ============================================================================
-// 3. FIELD MANAGER (Normalized Coordinates & Properties)
+// 9. FIELD MANAGER (Normalized Coordinates & Properties)
 // ============================================================================
 const FieldManager = {
   fields: [],
   selectedFieldId: null,
   counter: 1,
 
-  // Standard predefined field types with sensible default autoFit rules
   fieldTemplates: {
     name: {
       type: 'name',
       label: 'Participant Name',
       placeholder: '{{NAME}}',
-      sampleVal: 'Arun Kumar',
       width: 0.50,
       height: 0.08,
       fontSizePx: 38,
@@ -234,7 +794,6 @@ const FieldManager = {
       type: 'reg_no',
       label: 'Registration Number',
       placeholder: '{{REG_NO}}',
-      sampleVal: '23ECE001',
       width: 0.32,
       height: 0.05,
       fontSizePx: 22,
@@ -247,7 +806,6 @@ const FieldManager = {
       type: 'department',
       label: 'Department',
       placeholder: '{{DEPARTMENT}}',
-      sampleVal: 'Electronics & Communication',
       width: 0.45,
       height: 0.06,
       fontSizePx: 22,
@@ -260,7 +818,6 @@ const FieldManager = {
       type: 'sno',
       label: 'S.No',
       placeholder: '{{S_NO}}',
-      sampleVal: '001',
       width: 0.15,
       height: 0.04,
       fontSizePx: 16,
@@ -273,7 +830,6 @@ const FieldManager = {
       type: 'event_name',
       label: 'Event Name',
       placeholder: '{{EVENT_NAME}}',
-      sampleVal: 'National Tech Symposium 2026',
       width: 0.55,
       height: 0.07,
       fontSizePx: 26,
@@ -286,7 +842,6 @@ const FieldManager = {
       type: 'date',
       label: 'Date',
       placeholder: '{{DATE}}',
-      sampleVal: 'October 15, 2026',
       width: 0.25,
       height: 0.04,
       fontSizePx: 18,
@@ -299,7 +854,6 @@ const FieldManager = {
       type: 'custom',
       label: 'Custom Field',
       placeholder: '{{CUSTOM}}',
-      sampleVal: 'Custom Text',
       width: 0.30,
       height: 0.05,
       fontSizePx: 20,
@@ -311,40 +865,39 @@ const FieldManager = {
   },
 
   addField(type) {
-    const template = this.fieldTemplates[type] || this.fieldTemplates.custom;
-    
-    // Position staggered or centered in viewport
-    const count = this.fields.length;
-    let initialX = Math.max(0.1, 0.5 - template.width / 2);
-    let initialY = Math.min(0.8, 0.35 + (count * 0.08));
+    let newField;
+    HistoryManager.recordAction(() => {
+      const template = this.fieldTemplates[type] || this.fieldTemplates.custom;
+      const count = this.fields.length;
+      let initialX = Math.max(0.1, 0.5 - template.width / 2);
+      let initialY = Math.min(0.8, 0.35 + (count * 0.08));
 
-    const id = `field_${this.counter++}`;
-    const newField = {
-      id: id,
-      type: type,
-      label: type === 'custom' ? `Custom ${this.counter - 1}` : template.label,
-      placeholder: template.placeholder,
-      sampleVal: template.sampleVal,
-      // Normalized coordinates (0.0 to 1.0)
-      x: initialX,
-      y: initialY,
-      width: template.width,
-      height: template.height,
-      rotation: 0,
-      fontSizePx: template.fontSizePx,
-      fontWeight: template.fontWeight,
-      fontStyle: 'normal',
-      fontFamily: template.fontFamily,
-      color: '#111827',
-      align: template.align,
-      letterSpacing: 0,
-      lineHeight: 1.2,
-      autoFit: template.autoFit
-    };
+      const id = `field_${this.counter++}`;
+      newField = {
+        id: id,
+        type: type,
+        label: type === 'custom' ? `Custom ${this.counter - 1}` : template.label,
+        placeholder: template.placeholder,
+        x: Number(initialX.toFixed(4)),
+        y: Number(initialY.toFixed(4)),
+        width: template.width,
+        height: template.height,
+        rotation: 0,
+        fontSizePx: template.fontSizePx,
+        fontWeight: template.fontWeight,
+        fontStyle: 'normal',
+        fontFamily: template.fontFamily,
+        color: '#171717',
+        align: template.align,
+        letterSpacing: 0,
+        lineHeight: 1.2,
+        autoFit: template.autoFit
+      };
 
-    this.fields.push(newField);
-    this.selectField(id);
-    Editor.renderFieldElement(newField);
+      this.fields.push(newField);
+      this.selectField(id);
+      Editor.renderFieldElement(newField);
+    });
     return newField;
   },
 
@@ -369,12 +922,14 @@ const FieldManager = {
   deleteField(id) {
     const index = this.fields.findIndex(f => f.id === id);
     if (index !== -1) {
-      this.fields.splice(index, 1);
-      if (this.selectedFieldId === id) {
-        this.selectedFieldId = null;
-      }
-      Editor.removeFieldElement(id);
-      Editor.onFieldSelectionChanged();
+      HistoryManager.recordAction(() => {
+        this.fields.splice(index, 1);
+        if (this.selectedFieldId === id) {
+          this.selectedFieldId = null;
+        }
+        Editor.removeFieldElement(id);
+        Editor.onFieldSelectionChanged();
+      });
     }
   },
 
@@ -386,7 +941,7 @@ const FieldManager = {
 };
 
 // ============================================================================
-// 4. EDITOR (Interactive Drag, Resize, Rotate & Floating Toolbar)
+// 10. EDITOR (Interactive Drag, Resize, Rotate & Floating Toolbar)
 // ============================================================================
 const Editor = {
   stage: null,
@@ -446,7 +1001,6 @@ const Editor = {
     this.stage.style.width = `${targetWidth}px`;
     this.stage.style.height = `${targetHeight}px`;
 
-    // Re-render all existing fields to scale smoothly
     FieldManager.fields.forEach(f => this.updateFieldElement(f));
     this.positionToolbar();
   },
@@ -458,12 +1012,10 @@ const Editor = {
       el.id = field.id;
       el.className = 'cert-field';
       
-      // Text container
       const content = document.createElement('div');
       content.className = 'cert-field-content';
       el.appendChild(content);
 
-      // 8 Resize Handles
       const handles = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
       handles.forEach(h => {
         const handle = document.createElement('div');
@@ -472,7 +1024,6 @@ const Editor = {
         el.appendChild(handle);
       });
 
-      // Rotation Handle & line
       const rotLine = document.createElement('div');
       rotLine.className = 'rotate-line';
       el.appendChild(rotLine);
@@ -497,7 +1048,6 @@ const Editor = {
     const stageH = this.stage.clientHeight;
     const scale = stageH / (TemplateManager.naturalHeight || 1000);
 
-    // Apply normalized percentages
     el.style.left = `${field.x * 100}%`;
     el.style.top = `${field.y * 100}%`;
     el.style.width = `${field.width * 100}%`;
@@ -513,10 +1063,8 @@ const Editor = {
     content.style.textAlign = field.align;
     content.style.letterSpacing = `${(field.letterSpacing || 0) * scale}px`;
 
-    // Base font size scaled to current stage
     let currentFontSize = Math.max(10, Math.round(field.fontSizePx * scale));
 
-    // Handle interactive auto-fit preview in DOM
     if (field.autoFit) {
       const boxWidth = field.width * stageW;
       const textLength = field.placeholder.length || 8;
@@ -551,9 +1099,10 @@ const Editor = {
       e.stopPropagation();
       FieldManager.selectField(field.id);
 
-      const targetHandle = e.target.dataset.handle;
-      const rect = this.stage.getBoundingClientRect();
+      // Save pre-drag snapshot for smart grouped undo
+      HistoryManager.dragStartSnapshot = HistoryManager.captureState();
 
+      const targetHandle = e.target.dataset.handle;
       if (targetHandle === 'rotate') {
         this.dragAction = 'rotate';
         this.dragStartRotation = field.rotation || 0;
@@ -594,7 +1143,6 @@ const Editor = {
         let newX = this.dragStartFieldX + deltaX;
         let newY = this.dragStartFieldY + deltaY;
 
-        // Keep inside bounds
         newX = Math.max(0, Math.min(1 - field.width, newX));
         newY = Math.max(0, Math.min(1 - field.height, newY));
 
@@ -646,7 +1194,6 @@ const Editor = {
         if (deg > 180) deg -= 360;
         if (deg < -180) deg += 360;
 
-        // Snap to 0 if within +/- 4 degrees
         if (Math.abs(deg) <= 4) deg = 0;
 
         field.rotation = deg;
@@ -655,24 +1202,34 @@ const Editor = {
       }
     });
 
-    el.addEventListener('pointerup', (e) => {
+    const commitDrag = (e) => {
+      if (this.dragAction && HistoryManager.dragStartSnapshot) {
+        const currentState = HistoryManager.captureState();
+        // Check if values actually changed to prevent empty undo states
+        const hasChanged = JSON.stringify(HistoryManager.dragStartSnapshot.fields) !== JSON.stringify(currentState.fields);
+        if (hasChanged) {
+          HistoryManager.undoStack.push(HistoryManager.dragStartSnapshot);
+          if (HistoryManager.undoStack.length > HistoryManager.maxStates) {
+            HistoryManager.undoStack.shift();
+          }
+          HistoryManager.redoStack = [];
+          HistoryManager.updateUI();
+          SessionManager.scheduleSave();
+        }
+      }
       this.dragAction = null;
       this.activeHandle = null;
+      HistoryManager.dragStartSnapshot = null;
       el.classList.remove('is-dragging');
       try { el.releasePointerCapture(e.pointerId); } catch (_) {}
-    });
+    };
 
-    el.addEventListener('pointercancel', (e) => {
-      this.dragAction = null;
-      this.activeHandle = null;
-      el.classList.remove('is-dragging');
-      try { el.releasePointerCapture(e.pointerId); } catch (_) {}
-    });
+    el.addEventListener('pointerup', commitDrag);
+    el.addEventListener('pointercancel', commitDrag);
   },
 
   bindViewportEvents() {
     this.viewport.addEventListener('pointerdown', (e) => {
-      // If clicking stage background or viewport outside any field, deselect
       if (!e.target.closest('.cert-field') && !e.target.closest('#floating-toolbar') && !e.target.closest('#font-picker-popover')) {
         FieldManager.deselectAll();
       }
@@ -715,16 +1272,13 @@ const Editor = {
     const stageRect = this.stage.getBoundingClientRect();
     const fieldRect = fieldEl.getBoundingClientRect();
 
-    // Position floating toolbar just above the field box
     const toolbarWidth = this.toolbar.offsetWidth || 340;
     const toolbarHeight = this.toolbar.offsetHeight || 38;
 
     let left = (fieldRect.left - stageRect.left) + (fieldRect.width / 2) - (toolbarWidth / 2);
     let top = (fieldRect.top - stageRect.top) - toolbarHeight - 12;
 
-    // Boundary checks within stage
     if (top < 10) {
-      // If too close to top edge, dock below the field
       top = (fieldRect.bottom - stageRect.top) + 12;
     }
     if (left < 10) left = 10;
@@ -741,7 +1295,6 @@ const Editor = {
     document.getElementById('tb-current-font').style.fontFamily = `'${field.fontFamily}', sans-serif`;
     document.getElementById('tb-font-size').value = field.fontSizePx;
     
-    // Bold & Italic status
     const isBold = field.fontWeight === 'bold' || parseInt(field.fontWeight) >= 600;
     const boldBtn = document.getElementById('tb-bold-btn');
     boldBtn.className = `px-2 py-1 font-bold transition-colors ${isBold ? 'bg-indigo-50 text-indigo-700' : 'text-gray-700 hover:bg-gray-100'}`;
@@ -750,10 +1303,8 @@ const Editor = {
     const italicBtn = document.getElementById('tb-italic-btn');
     italicBtn.className = `px-2 py-1 italic font-serif border-l border-gray-200 transition-colors ${isItalic ? 'bg-indigo-50 text-indigo-700' : 'text-gray-700 hover:bg-gray-100'}`;
 
-    // Color picker
     document.getElementById('tb-color-picker').value = field.color;
 
-    // AutoFit
     const autofitBtn = document.getElementById('tb-autofit-btn');
     if (field.autoFit) {
       autofitBtn.className = 'flex items-center space-x-1 px-2 py-1 rounded border border-indigo-300 bg-indigo-50 text-[11px] font-medium text-indigo-700';
@@ -761,7 +1312,6 @@ const Editor = {
       autofitBtn.className = 'flex items-center space-x-1 px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 text-[11px] text-gray-500';
     }
 
-    // Rotation & Spacing
     document.getElementById('tb-rotation-input').value = field.rotation || 0;
     document.getElementById('tb-spacing-input').value = field.letterSpacing || 0;
   },
@@ -772,9 +1322,13 @@ const Editor = {
     const updateSize = (newSize) => {
       const active = FieldManager.getSelectedField();
       if (!active) return;
-      active.fontSizePx = Math.max(8, Math.min(200, parseInt(newSize) || 32));
-      sizeInput.value = active.fontSizePx;
-      this.updateFieldElement(active);
+      const parsed = Math.max(8, Math.min(200, parseInt(newSize) || 32));
+      if (active.fontSizePx === parsed) return;
+      HistoryManager.recordAction(() => {
+        active.fontSizePx = parsed;
+        sizeInput.value = parsed;
+        this.updateFieldElement(active);
+      });
     };
 
     document.getElementById('tb-size-dec').addEventListener('click', () => {
@@ -791,47 +1345,76 @@ const Editor = {
     document.getElementById('tb-bold-btn').addEventListener('click', () => {
       const active = FieldManager.getSelectedField();
       if (!active) return;
-      const isBold = active.fontWeight === 'bold' || parseInt(active.fontWeight) >= 600;
-      active.fontWeight = isBold ? 'normal' : 'bold';
-      this.updateFieldElement(active);
-      this.updateToolbarValues(active);
+      HistoryManager.recordAction(() => {
+        const isBold = active.fontWeight === 'bold' || parseInt(active.fontWeight) >= 600;
+        active.fontWeight = isBold ? 'normal' : 'bold';
+        this.updateFieldElement(active);
+        this.updateToolbarValues(active);
+      });
     });
 
     // Italic Toggle
     document.getElementById('tb-italic-btn').addEventListener('click', () => {
       const active = FieldManager.getSelectedField();
       if (!active) return;
-      active.fontStyle = active.fontStyle === 'italic' ? 'normal' : 'italic';
-      this.updateFieldElement(active);
-      this.updateToolbarValues(active);
+      HistoryManager.recordAction(() => {
+        active.fontStyle = active.fontStyle === 'italic' ? 'normal' : 'italic';
+        this.updateFieldElement(active);
+        this.updateToolbarValues(active);
+      });
     });
 
     // Alignment Toggles
     const setAlign = (align) => {
       const active = FieldManager.getSelectedField();
-      if (!active) return;
-      active.align = align;
-      this.updateFieldElement(active);
+      if (!active || active.align === align) return;
+      HistoryManager.recordAction(() => {
+        active.align = align;
+        this.updateFieldElement(active);
+      });
     };
     document.getElementById('tb-align-left').addEventListener('click', () => setAlign('left'));
     document.getElementById('tb-align-center').addEventListener('click', () => setAlign('center'));
     document.getElementById('tb-align-right').addEventListener('click', () => setAlign('right'));
 
-    // Color Picker
-    document.getElementById('tb-color-picker').addEventListener('input', (e) => {
+    // Text Color Picker
+    let colorBeforeInput = null;
+    const colorPicker = document.getElementById('tb-color-picker');
+    colorPicker.addEventListener('focus', () => {
+      const active = FieldManager.getSelectedField();
+      if (active) colorBeforeInput = active.color;
+    });
+    colorPicker.addEventListener('input', (e) => {
       const active = FieldManager.getSelectedField();
       if (!active) return;
+      if (!colorBeforeInput) colorBeforeInput = active.color;
       active.color = e.target.value;
       this.updateFieldElement(active);
+    });
+    colorPicker.addEventListener('change', (e) => {
+      const active = FieldManager.getSelectedField();
+      if (!active) return;
+      const oldColor = colorBeforeInput || active.color;
+      const newColor = e.target.value;
+      colorBeforeInput = null;
+      if (oldColor !== newColor) {
+        active.color = oldColor;
+        HistoryManager.recordAction(() => {
+          active.color = newColor;
+          this.updateFieldElement(active);
+        });
+      }
     });
 
     // AutoFit Toggle
     document.getElementById('tb-autofit-btn').addEventListener('click', () => {
       const active = FieldManager.getSelectedField();
       if (!active) return;
-      active.autoFit = !active.autoFit;
-      this.updateFieldElement(active);
-      this.updateToolbarValues(active);
+      HistoryManager.recordAction(() => {
+        active.autoFit = !active.autoFit;
+        this.updateFieldElement(active);
+        this.updateToolbarValues(active);
+      });
       App.showToast(`Auto Fit: ${active.autoFit ? 'Enabled' : 'Disabled'}`);
     });
 
@@ -842,9 +1425,12 @@ const Editor = {
       if (!active) return;
       let val = parseInt(e.target.value) || 0;
       val = Math.max(-180, Math.min(180, val));
-      active.rotation = val;
-      rotInput.value = val;
-      this.updateFieldElement(active);
+      if (active.rotation === val) return;
+      HistoryManager.recordAction(() => {
+        active.rotation = val;
+        rotInput.value = val;
+        this.updateFieldElement(active);
+      });
     });
 
     // Letter Spacing Input
@@ -853,8 +1439,11 @@ const Editor = {
       const active = FieldManager.getSelectedField();
       if (!active) return;
       let val = parseFloat(e.target.value) || 0;
-      active.letterSpacing = val;
-      this.updateFieldElement(active);
+      if (active.letterSpacing === val) return;
+      HistoryManager.recordAction(() => {
+        active.letterSpacing = val;
+        this.updateFieldElement(active);
+      });
     });
 
     // Delete Field Button
@@ -880,21 +1469,23 @@ const Editor = {
         FieldManager.deselectAll();
       } else if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
         e.preventDefault();
-        const step = e.shiftKey ? 0.01 : 0.002;
-        if (e.key === 'ArrowUp') active.y = Math.max(0, Number((active.y - step).toFixed(4)));
-        if (e.key === 'ArrowDown') active.y = Math.min(1 - active.height, Number((active.y + step).toFixed(4)));
-        if (e.key === 'ArrowLeft') active.x = Math.max(0, Number((active.x - step).toFixed(4)));
-        if (e.key === 'ArrowRight') active.x = Math.min(1 - active.width, Number((active.x + step).toFixed(4)));
+        HistoryManager.recordAction(() => {
+          const step = e.shiftKey ? 0.01 : 0.002;
+          if (e.key === 'ArrowUp') active.y = Math.max(0, Number((active.y - step).toFixed(4)));
+          if (e.key === 'ArrowDown') active.y = Math.min(1 - active.height, Number((active.y + step).toFixed(4)));
+          if (e.key === 'ArrowLeft') active.x = Math.max(0, Number((active.x - step).toFixed(4)));
+          if (e.key === 'ArrowRight') active.x = Math.min(1 - active.width, Number((active.x + step).toFixed(4)));
 
-        this.updateFieldElement(active);
-        this.positionToolbar();
+          this.updateFieldElement(active);
+          this.positionToolbar();
+        });
       }
     });
   }
 };
 
 // ============================================================================
-// 5. EXCEL MANAGER (SheetJS Parsing)
+// 11. EXCEL MANAGER (SheetJS Parsing)
 // ============================================================================
 const ExcelManager = {
   fileName: '',
@@ -928,7 +1519,6 @@ const ExcelManager = {
             return reject(new Error('No participant data found in the first sheet.'));
           }
 
-          // Extract headers
           const headerSet = new Set();
           jsonRows.forEach(row => {
             Object.keys(row).forEach(key => headerSet.add(key.trim()));
@@ -938,6 +1528,8 @@ const ExcelManager = {
           this.fileName = fileName;
           this.headers = headers;
           this.rows = jsonRows;
+
+          SessionManager.scheduleSave();
 
           resolve({
             fileName: fileName,
@@ -965,12 +1557,11 @@ const ExcelManager = {
 };
 
 // ============================================================================
-// 6. MAPPING MANAGER (Automatic Column Matching & Confirmation Modal)
+// 12. MAPPING MANAGER (Column Matching & Confirmation Modal)
 // ============================================================================
 const MappingManager = {
   mappings: {}, // field.id -> excelHeader
 
-  // Common variations for standard fields
   aliases: {
     name: [
       'name', 'student name', 'participant name', 'candidate name', 'full name', 
@@ -1036,6 +1627,7 @@ const MappingManager = {
     });
 
     this.mappings = newMappings;
+    SessionManager.scheduleSave();
     return allConfident;
   },
 
@@ -1045,18 +1637,18 @@ const MappingManager = {
 
     fields.forEach(field => {
       const row = document.createElement('div');
-      row.className = 'flex items-center justify-between py-2 border-b border-gray-100 last:border-b-0 text-xs';
+      row.className = 'flex items-center justify-between py-2.5 border-b border-[#E5E5E5] last:border-b-0 text-xs';
 
       const left = document.createElement('div');
       left.className = 'flex flex-col';
       left.innerHTML = `
-        <span class="font-medium text-gray-800">${field.label}</span>
-        <span class="text-[10px] text-gray-400">${field.placeholder}</span>
+        <span class="font-medium text-[#171717]">${field.label}</span>
+        <span class="text-[11px] text-[#6B6B6B]">${field.placeholder}</span>
       `;
 
       const right = document.createElement('div');
       const select = document.createElement('select');
-      select.className = 'px-2 py-1 text-xs border border-gray-200 rounded focus:outline-none focus:border-indigo-500 bg-white';
+      select.className = 'px-2.5 py-1 text-xs border border-[#E5E5E5] rounded-[4px] focus:outline-none focus:border-[#4F46E5] bg-white text-[#171717]';
       select.dataset.fieldId = field.id;
 
       select.innerHTML = '<option value="">-- None / Skip --</option>';
@@ -1073,7 +1665,6 @@ const MappingManager = {
 
     ModalManager.open('modal-mapping');
 
-    // Confirm button listener
     const confirmBtn = document.getElementById('btn-confirm-mapping');
     const handleConfirm = () => {
       const selects = listEl.querySelectorAll('select');
@@ -1088,6 +1679,7 @@ const MappingManager = {
       });
       ModalManager.close('modal-mapping');
       confirmBtn.removeEventListener('click', handleConfirm);
+      SessionManager.scheduleSave();
       if (onConfirm) onConfirm();
     };
 
@@ -1096,13 +1688,9 @@ const MappingManager = {
 };
 
 // ============================================================================
-// 7. CERTIFICATE RENDERER (Unified Pixel-Perfect HTML5 Canvas Engine)
+// 13. CERTIFICATE RENDERER (Unified Pixel-Perfect HTML5 Canvas Engine)
 // ============================================================================
 const CertificateRenderer = {
-  /**
-   * Renders a certificate onto any canvas element.
-   * Maintains 1:1 parity between preview and PDF output.
-   */
   async renderCertificate(canvas, templateImg, fields, participantRow, options = {}) {
     const ctx = canvas.getContext('2d');
     const width = options.width || templateImg.naturalWidth;
@@ -1119,7 +1707,6 @@ const CertificateRenderer = {
 
     // 2. Render each field
     for (const field of fields) {
-      // Determine field text from mapping or placeholder
       let text = '';
       if (participantRow) {
         const mappedCol = MappingManager.mappings[field.id];
@@ -1128,30 +1715,25 @@ const CertificateRenderer = {
         } else if (participantRow[field.label] !== undefined) {
           text = String(participantRow[field.label]);
         } else {
-          // If empty/missing in row
           text = '';
         }
       } else {
-        text = field.sampleVal || field.placeholder;
+        text = field.placeholder;
       }
 
-      if (!text) continue; // Skip empty text values
+      if (!text) continue;
 
-      // Ensure custom font is ready in canvas context
       await FontManager.ensureFontLoaded(field.fontFamily, field.fontWeight, field.fontStyle);
 
-      // Normalized coordinates to target canvas pixels
       const boxX = field.x * width;
       const boxY = field.y * height;
       const boxW = field.width * width;
       const boxH = field.height * height;
 
-      // Base font size scaled to this canvas
       let fontSize = field.fontSizePx * scale;
       const padding = 6 * scale;
       const maxTextWidth = boxW - (padding * 2);
 
-      // Auto-Fit Calculation
       ctx.save();
       ctx.font = `${field.fontStyle || 'normal'} ${field.fontWeight || 'normal'} ${fontSize}px "${field.fontFamily}", sans-serif`;
 
@@ -1167,17 +1749,15 @@ const CertificateRenderer = {
           ctx.font = `${field.fontStyle || 'normal'} ${field.fontWeight || 'normal'} ${fontSize}px "${field.fontFamily}", sans-serif`;
         }
 
-        // Height guard
         if (fontSize > boxH * 0.95) {
           fontSize = Math.max(10 * scale, Math.floor(boxH * 0.95));
           ctx.font = `${field.fontStyle || 'normal'} ${field.fontWeight || 'normal'} ${fontSize}px "${field.fontFamily}", sans-serif`;
         }
       }
 
-      ctx.fillStyle = field.color || '#111827';
+      ctx.fillStyle = field.color || '#171717';
       ctx.textBaseline = 'middle';
 
-      // Horizontal alignment anchor
       let textX;
       if (field.align === 'left') {
         textX = boxX + padding;
@@ -1192,7 +1772,6 @@ const CertificateRenderer = {
 
       const textY = boxY + (boxH / 2);
 
-      // Handle Rotation
       if (field.rotation && field.rotation !== 0) {
         const centerX = boxX + boxW / 2;
         const centerY = boxY + boxH / 2;
@@ -1202,7 +1781,6 @@ const CertificateRenderer = {
         ctx.translate(-centerX, -centerY);
       }
 
-      // Draw the text
       ctx.fillText(text, textX, textY);
       ctx.restore();
     }
@@ -1212,7 +1790,7 @@ const CertificateRenderer = {
 };
 
 // ============================================================================
-// 8. PREVIEW MANAGER (Single Preview, Grid View & Navigation)
+// 14. PREVIEW MANAGER (Single Preview, Grid View & Pagination)
 // ============================================================================
 const PreviewManager = {
   participants: [],
@@ -1226,7 +1804,6 @@ const PreviewManager = {
   },
 
   bindEvents() {
-    // Navigation
     document.getElementById('btn-prev-cert').addEventListener('click', () => {
       this.navigate(this.currentIndex - 1);
     });
@@ -1250,8 +1827,7 @@ const PreviewManager = {
 
     // Back to editor
     document.getElementById('btn-preview-back-editor').addEventListener('click', () => {
-      App.switchState('state-editor');
-      Editor.resizeStage();
+      NavigationManager.goTo('editor');
     });
 
     // Primary Export button
@@ -1261,8 +1837,8 @@ const PreviewManager = {
 
     // Arrow keys for preview navigation
     window.addEventListener('keydown', (e) => {
-      if (App.currentState !== 'state-preview') return;
-      if (['INPUT', 'SELECT'].includes(document.activeElement.tagName)) return;
+      if (NavigationManager.currentPage !== 'preview') return;
+      if (['INPUT', 'SELECT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
 
       if (e.key === 'ArrowLeft') this.navigate(this.currentIndex - 1);
       if (e.key === 'ArrowRight') this.navigate(this.currentIndex + 1);
@@ -1271,17 +1847,14 @@ const PreviewManager = {
 
   setup(participants) {
     this.participants = participants;
-    this.currentIndex = 0;
     this.failedIndices = [];
     this.cachedThumbnails = {};
 
-    // Validate participants for missing required mapped values
     participants.forEach((p, idx) => {
       let isRowFailed = false;
       FieldManager.fields.forEach(f => {
         const col = MappingManager.mappings[f.id];
         if (col && (p[col] === undefined || String(p[col]).trim() === '')) {
-          // If a mapped field is completely empty in this row
           isRowFailed = true;
         }
       });
@@ -1290,24 +1863,30 @@ const PreviewManager = {
       }
     });
 
-    // Update Header Counts
     const countTitle = document.getElementById('preview-count-title');
-    countTitle.textContent = `${participants.length} Certificates`;
+    if (countTitle) {
+      countTitle.textContent = `${participants.length} Certificates`;
+    }
 
     const failBadge = document.getElementById('preview-fail-badge');
-    if (this.failedIndices.length > 0) {
-      failBadge.classList.remove('hidden');
-      failBadge.textContent = `${participants.length - this.failedIndices.length} generated, ${this.failedIndices.length} with empty fields`;
-    } else {
-      failBadge.classList.add('hidden');
+    if (failBadge) {
+      if (this.failedIndices.length > 0) {
+        failBadge.classList.remove('hidden');
+        failBadge.textContent = `${participants.length - this.failedIndices.length} generated, ${this.failedIndices.length} with empty fields`;
+      } else {
+        failBadge.classList.add('hidden');
+      }
     }
 
     const jumpInput = document.getElementById('preview-jump-input');
-    jumpInput.max = participants.length;
-    jumpInput.value = 1;
+    if (jumpInput) {
+      jumpInput.max = participants.length;
+      jumpInput.value = this.currentIndex + 1;
+    }
 
-    this.setViewMode('single');
+    this.setViewMode(this.viewMode || 'single');
     this.renderCurrentSingle();
+    SessionManager.scheduleSave();
   },
 
   setViewMode(mode) {
@@ -1318,33 +1897,34 @@ const PreviewManager = {
     const containerGrid = document.getElementById('preview-grid-container');
 
     if (mode === 'single') {
-      btnSingle.className = 'px-3 py-1 text-xs font-medium rounded text-gray-900 bg-white shadow-xs';
-      btnGrid.className = 'px-3 py-1 text-xs font-medium rounded text-gray-500 hover:text-gray-900';
+      btnSingle.className = 'px-3 py-1 text-xs font-medium rounded-[4px] text-[#171717] bg-white border border-[#E5E5E5]';
+      btnGrid.className = 'px-3 py-1 text-xs font-medium rounded-[4px] text-[#6B6B6B] hover:text-[#171717] border border-transparent';
       containerSingle.classList.remove('hidden');
       containerGrid.classList.add('hidden');
       this.renderCurrentSingle();
     } else {
-      btnGrid.className = 'px-3 py-1 text-xs font-medium rounded text-gray-900 bg-white shadow-xs';
-      btnSingle.className = 'px-3 py-1 text-xs font-medium rounded text-gray-500 hover:text-gray-900';
+      btnGrid.className = 'px-3 py-1 text-xs font-medium rounded-[4px] text-[#171717] bg-white border border-[#E5E5E5]';
+      btnSingle.className = 'px-3 py-1 text-xs font-medium rounded-[4px] text-[#6B6B6B] hover:text-[#171717] border border-transparent';
       containerSingle.classList.add('hidden');
       containerGrid.classList.remove('hidden');
       this.renderGridView();
     }
+    SessionManager.scheduleSave();
   },
 
   navigate(newIndex) {
     if (newIndex < 0 || newIndex >= this.participants.length) return;
     this.currentIndex = newIndex;
     this.renderCurrentSingle();
+    SessionManager.scheduleSave();
   },
 
   async renderCurrentSingle() {
-    if (this.participants.length === 0) return;
+    if (this.participants.length === 0 || !TemplateManager.isLoaded()) return;
 
     const row = this.participants[this.currentIndex];
     const canvas = document.getElementById('single-preview-canvas');
 
-    // Display dimensions matching container aspect ratio
     const width = Math.min(1600, TemplateManager.naturalWidth);
     const height = Math.round(width / TemplateManager.aspectRatio);
 
@@ -1378,19 +1958,17 @@ const PreviewManager = {
     const thumbWidth = 260;
     const thumbHeight = Math.round(thumbWidth / TemplateManager.aspectRatio);
 
-    // Render cards progressively
     for (let i = 0; i < this.participants.length; i++) {
       const row = this.participants[i];
       const card = document.createElement('div');
-      card.className = 'cert-thumb-card bg-white border border-gray-200 rounded p-2 cursor-pointer hover:border-indigo-400 flex flex-col items-center';
+      card.className = 'cert-thumb-card bg-white border border-[#E5E5E5] rounded-[6px] p-2 cursor-pointer hover:border-[#D4D4D4] flex flex-col items-center';
       
       const thumbCanvas = document.createElement('canvas');
-      thumbCanvas.className = 'w-full object-contain rounded-xs border border-gray-100 bg-gray-50';
+      thumbCanvas.className = 'w-full object-contain rounded-[4px] border border-[#E5E5E5] bg-white';
       thumbCanvas.width = thumbWidth;
       thumbCanvas.height = thumbHeight;
       card.appendChild(thumbCanvas);
 
-      // Label & Index
       const nameField = FieldManager.fields.find(f => f.type === 'name');
       let pName = 'Participant';
       if (nameField && MappingManager.mappings[nameField.id]) {
@@ -1398,10 +1976,10 @@ const PreviewManager = {
       }
 
       const meta = document.createElement('div');
-      meta.className = 'w-full mt-2 flex items-center justify-between text-[11px] text-gray-500';
+      meta.className = 'w-full mt-2 flex items-center justify-between text-[11px] text-[#6B6B6B]';
       meta.innerHTML = `
-        <span class="font-mono text-gray-400">#${String(i + 1).padStart(3, '0')}</span>
-        <span class="font-medium text-gray-800 truncate max-w-[150px]">${pName}</span>
+        <span class="font-mono text-[#A3A3A3]">#${String(i + 1).padStart(3, '0')}</span>
+        <span class="font-medium text-[#171717] truncate max-w-[150px]">${pName}</span>
       `;
       card.appendChild(meta);
 
@@ -1412,7 +1990,6 @@ const PreviewManager = {
 
       gridEl.appendChild(card);
 
-      // Render thumbnail asynchronously
       CertificateRenderer.renderCertificate(
         thumbCanvas,
         TemplateManager.image,
@@ -1421,7 +1998,6 @@ const PreviewManager = {
         { width: thumbWidth, height: thumbHeight }
       );
 
-      // Non-blocking yield for large lists
       if (i % 12 === 0) {
         await new Promise(r => setTimeout(r, 0));
       }
@@ -1430,7 +2006,7 @@ const PreviewManager = {
 };
 
 // ============================================================================
-// 9. PDF EXPORTER (jsPDF High-Resolution Generation)
+// 15. PDF EXPORTER (jsPDF High-Resolution Generation)
 // ============================================================================
 const PDFExporter = {
   sanitizeFilename(name) {
@@ -1447,16 +2023,12 @@ const PDFExporter = {
     if (nameField && MappingManager.mappings[nameField.id]) {
       return row[MappingManager.mappings[nameField.id]] || 'Participant';
     }
-    // Search any header containing name
     for (const key of Object.keys(row)) {
       if (key.toLowerCase().includes('name')) return String(row[key]);
     }
     return 'Participant';
   },
 
-  /**
-   * Generates a single high-quality PDF blob for one participant.
-   */
   async generateSinglePDF(row, index, templateWidth, templateHeight) {
     const { jsPDF } = window.jspdf;
     const orientation = templateWidth >= templateHeight ? 'landscape' : 'portrait';
@@ -1468,7 +2040,6 @@ const PDFExporter = {
       hotfixes: ['px_scaling']
     });
 
-    // Offscreen render canvas at 100% template resolution
     const canvas = document.createElement('canvas');
     await CertificateRenderer.renderCertificate(
       canvas,
@@ -1488,9 +2059,6 @@ const PDFExporter = {
     return { filename, blob };
   },
 
-  /**
-   * Generates a combined multi-page PDF containing all participants.
-   */
   async exportCombinedPDF(participants, onProgress) {
     const { jsPDF } = window.jspdf;
     const width = TemplateManager.naturalWidth;
@@ -1526,7 +2094,6 @@ const PDFExporter = {
       const imgData = canvas.toDataURL('image/jpeg', 0.95);
       pdf.addImage(imgData, 'JPEG', 0, 0, width, height);
 
-      // Yield event loop
       await new Promise(r => setTimeout(r, 0));
     }
 
@@ -1535,7 +2102,7 @@ const PDFExporter = {
 };
 
 // ============================================================================
-// 10. ZIP EXPORTER (JSZip Bulk Packaging)
+// 16. ZIP EXPORTER (JSZip Bulk Packaging)
 // ============================================================================
 const ZipExporter = {
   async exportZip(participants, onProgress) {
@@ -1557,7 +2124,6 @@ const ZipExporter = {
       const { filename, blob } = await PDFExporter.generateSinglePDF(row, i, width, height);
       folder.file(filename, blob);
 
-      // Non-blocking yield
       await new Promise(r => setTimeout(r, 0));
     }
 
@@ -1571,7 +2137,6 @@ const ZipExporter = {
       }
     });
 
-    // Trigger download
     const link = document.createElement('a');
     link.href = URL.createObjectURL(zipBlob);
     link.download = 'Certificates.zip';
@@ -1583,7 +2148,7 @@ const ZipExporter = {
 };
 
 // ============================================================================
-// 11. MODAL MANAGER
+// 17. MODAL MANAGER
 // ============================================================================
 const ModalManager = {
   open(modalId) {
@@ -1638,31 +2203,22 @@ const ModalManager = {
 };
 
 // ============================================================================
-// 12. MAIN APP CONTROLLER
+// 18. MAIN APP CONTROLLER
 // ============================================================================
 const App = {
-  currentState: 'state-upload',
-
-  init() {
+  async init() {
     FontManager.init();
     Editor.init();
     PreviewManager.init();
+    NavigationManager.init();
+    HistoryManager.initKeyboard();
     this.bindGlobalEvents();
-  },
 
-  switchState(newState) {
-    const states = ['state-upload', 'state-editor', 'state-preview'];
-    states.forEach(s => {
-      const el = document.getElementById(s);
-      if (el) {
-        if (s === newState) {
-          el.classList.remove('hidden');
-        } else {
-          el.classList.add('hidden');
-        }
-      }
-    });
-    this.currentState = newState;
+    // Check for existing session and restore automatically
+    const restored = await SessionManager.restore();
+    if (!restored) {
+      NavigationManager.replace('upload');
+    }
   },
 
   showToast(message, type = 'info') {
@@ -1681,12 +2237,66 @@ const App = {
 
   bindGlobalEvents() {
     // ----------------------------------------
+    // Navigation Back Buttons
+    // ----------------------------------------
+    document.getElementById('btn-editor-back').addEventListener('click', () => {
+      NavigationManager.goTo('upload');
+    });
+
+    document.getElementById('btn-preview-back').addEventListener('click', () => {
+      NavigationManager.goTo('editor');
+    });
+
+    // ----------------------------------------
+    // Undo / Redo Toolbar Buttons
+    // ----------------------------------------
+    document.getElementById('btn-undo').addEventListener('click', () => {
+      HistoryManager.undo();
+    });
+
+    document.getElementById('btn-redo').addEventListener('click', () => {
+      HistoryManager.redo();
+    });
+
+    // ----------------------------------------
+    // Restart / Start Over Actions
+    // ----------------------------------------
+    document.getElementById('btn-editor-restart').addEventListener('click', () => {
+      RestartManager.requestRestart();
+    });
+
+    document.getElementById('btn-preview-restart').addEventListener('click', () => {
+      RestartManager.requestRestart();
+    });
+
+    document.getElementById('btn-confirm-restart').addEventListener('click', () => {
+      RestartManager.confirmRestart();
+    });
+
+    document.getElementById('btn-cancel-restart').addEventListener('click', () => {
+      ModalManager.close('modal-restart');
+    });
+
+    // ----------------------------------------
+    // Recovery Modal Actions
+    // ----------------------------------------
+    document.getElementById('btn-recovery-new').addEventListener('click', () => {
+      ModalManager.close('modal-recovery');
+      RestartManager.confirmRestart();
+    });
+
+    document.getElementById('btn-recovery-restore').addEventListener('click', () => {
+      ModalManager.close('modal-recovery');
+      NavigationManager.replace('upload');
+      this.showToast('Design and data restored. Please re-upload your template image.', 'info');
+    });
+
+    // ----------------------------------------
     // STATE 1: Template Upload Events
     // ----------------------------------------
     const fileInput = document.getElementById('template-file-input');
     const dropzone = document.getElementById('template-dropzone');
     const browseBtn = document.getElementById('btn-browse-template');
-    const sampleBtn = document.getElementById('btn-load-sample');
 
     browseBtn.addEventListener('click', (e) => {
       e.stopPropagation();
@@ -1718,14 +2328,9 @@ const App = {
       }
     });
 
-    sampleBtn.addEventListener('click', () => {
-      this.loadSampleWorkspace();
-    });
-
     // ----------------------------------------
-    // STATE 2: Editor Top Toolbar Events
+    // STATE 2: Editor Bottom Field Buttons
     // ----------------------------------------
-    // Add Field buttons
     document.querySelectorAll('.btn-add-field').forEach(btn => {
       btn.addEventListener('click', () => {
         const type = btn.dataset.fieldType;
@@ -1733,25 +2338,9 @@ const App = {
       });
     });
 
-    // Change Template (Start New)
-    document.getElementById('btn-change-template').addEventListener('click', () => {
-      if (FieldManager.fields.length > 0) {
-        ModalManager.open('modal-reset');
-      } else {
-        this.resetApp();
-      }
-    });
-
-    document.getElementById('btn-confirm-reset').addEventListener('click', () => {
-      ModalManager.close('modal-reset');
-      this.resetApp();
-    });
-
-    document.getElementById('btn-cancel-reset').addEventListener('click', () => {
-      ModalManager.close('modal-reset');
-    });
-
-    // Excel Upload Trigger
+    // ----------------------------------------
+    // Excel Upload Trigger & Remap
+    // ----------------------------------------
     const excelInput = document.getElementById('excel-file-input');
     const uploadExcelBtn = document.getElementById('btn-upload-excel');
     uploadExcelBtn.addEventListener('click', () => excelInput.click());
@@ -1777,7 +2366,9 @@ const App = {
       ModalManager.close('modal-mapping');
     });
 
+    // ----------------------------------------
     // Generate Certificates Primary Action
+    // ----------------------------------------
     document.getElementById('btn-trigger-generate').addEventListener('click', () => {
       this.handleGenerateClick();
     });
@@ -1827,7 +2418,7 @@ const App = {
   async handleTemplateUpload(file) {
     try {
       await TemplateManager.loadFromFile(file);
-      this.switchState('state-editor');
+      NavigationManager.goTo('editor');
       Editor.setupTemplate(TemplateManager.image);
 
       // Add default essential fields if empty
@@ -1835,86 +2426,14 @@ const App = {
         FieldManager.addField('name');
         FieldManager.addField('reg_no');
         FieldManager.addField('department');
+        // Clear history stack so defaults are the base state
+        HistoryManager.clear();
       }
+
+      await SessionManager.saveNow();
       this.showToast('Template uploaded successfully!', 'success');
     } catch (err) {
       this.showToast(err.message, 'error');
-    }
-  },
-
-  async loadSampleWorkspace() {
-    try {
-      // 1. Load sample template image
-      await TemplateManager.loadFromSrc('assets/sample-template.jpg');
-      this.switchState('state-editor');
-      Editor.setupTemplate(TemplateManager.image);
-
-      // 2. Add realistic placed fields centered
-      FieldManager.clear();
-      
-      const name = FieldManager.addField('name');
-      name.x = 0.20;
-      name.y = 0.40;
-      name.width = 0.60;
-      name.height = 0.10;
-      name.fontSizePx = 42;
-      name.fontFamily = 'Playfair Display';
-      name.fontWeight = 'bold';
-      name.autoFit = true;
-      Editor.updateFieldElement(name);
-
-      const reg = FieldManager.addField('reg_no');
-      reg.x = 0.32;
-      reg.y = 0.52;
-      reg.width = 0.36;
-      reg.height = 0.05;
-      reg.fontSizePx = 20;
-      reg.fontFamily = 'Inter';
-      Editor.updateFieldElement(reg);
-
-      const dept = FieldManager.addField('department');
-      dept.x = 0.25;
-      dept.y = 0.58;
-      dept.width = 0.50;
-      dept.height = 0.06;
-      dept.fontSizePx = 22;
-      dept.fontFamily = 'Inter';
-      dept.autoFit = true;
-      Editor.updateFieldElement(dept);
-
-      const eventField = FieldManager.addField('event_name');
-      eventField.x = 0.25;
-      eventField.y = 0.65;
-      eventField.width = 0.50;
-      eventField.height = 0.06;
-      eventField.fontSizePx = 24;
-      eventField.fontFamily = 'Montserrat';
-      eventField.fontWeight = '600';
-      Editor.updateFieldElement(eventField);
-
-      // 3. Load sample CSV participants
-      const response = await fetch('assets/sample_participants.csv');
-      const csvText = await response.text();
-      const workbook = XLSX.read(csvText, { type: 'string' });
-      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
-      const jsonRows = XLSX.utils.sheet_to_json(firstSheet, { defval: '', raw: false });
-
-      ExcelManager.fileName = 'sample_participants.csv';
-      ExcelManager.headers = Object.keys(jsonRows[0]);
-      ExcelManager.rows = jsonRows;
-
-      // Update Excel loaded badge
-      document.getElementById('excel-loaded-badge').classList.remove('hidden');
-      document.getElementById('excel-loaded-badge').classList.add('flex');
-      document.getElementById('btn-upload-excel').classList.add('hidden');
-      document.getElementById('excel-filename-text').textContent = 'sample_participants.csv';
-      document.getElementById('excel-row-count-text').textContent = `(${jsonRows.length})`;
-
-      // Auto map
-      MappingManager.autoMapFields(FieldManager.fields, ExcelManager.headers);
-      this.showToast('Loaded sample template & 15 participants!', 'success');
-    } catch (err) {
-      this.showToast('Error loading sample: ' + err.message, 'error');
     }
   },
 
@@ -1929,7 +2448,7 @@ const App = {
       document.getElementById('excel-filename-text').textContent = res.fileName;
       document.getElementById('excel-row-count-text').textContent = `(${res.rowCount})`;
 
-      // Check column mapping
+      // Auto-match columns
       const allConfident = MappingManager.autoMapFields(FieldManager.fields, ExcelManager.headers);
 
       if (!allConfident) {
@@ -1939,13 +2458,14 @@ const App = {
       } else {
         this.showToast(`Excel loaded: ${res.rowCount} participants matched ✓`, 'success');
       }
+
+      SessionManager.scheduleSave();
     } catch (err) {
       this.showToast(err.message, 'error');
     }
   },
 
   handleGenerateClick() {
-    // 1. Validation
     if (!TemplateManager.isLoaded()) {
       return this.showToast('Please upload a certificate template.', 'error');
     }
@@ -1960,7 +2480,6 @@ const App = {
       return;
     }
 
-    // 2. Check if all fields mapped
     const unmappedFields = FieldManager.fields.filter(f => !MappingManager.mappings[f.id]);
     if (unmappedFields.length > 0) {
       MappingManager.showMappingModal(FieldManager.fields, ExcelManager.headers, () => {
@@ -1975,25 +2494,10 @@ const App = {
   confirmAndGenerate() {
     const totalCount = ExcelManager.rows.length;
     ModalManager.openGenerateModal(totalCount, () => {
-      this.switchState('state-preview');
+      NavigationManager.goTo('preview');
       PreviewManager.setup(ExcelManager.rows);
       this.showToast(`Generated ${totalCount} certificates preview!`, 'success');
     });
-  },
-
-  resetApp() {
-    TemplateManager.reset();
-    FieldManager.clear();
-    ExcelManager.reset();
-    MappingManager.mappings = {};
-
-    document.getElementById('excel-loaded-badge').classList.add('hidden');
-    document.getElementById('excel-loaded-badge').classList.remove('flex');
-    document.getElementById('btn-upload-excel').classList.remove('hidden');
-    document.getElementById('template-file-input').value = '';
-    document.getElementById('excel-file-input').value = '';
-
-    this.switchState('state-upload');
   }
 };
 
