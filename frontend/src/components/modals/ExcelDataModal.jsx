@@ -1,9 +1,9 @@
 import { useState, useMemo } from 'react';
 import { Modal, ModalHeader, ModalBody, ModalFooter, BtnSecondary } from '../common/Modal.jsx';
-import { normalizePhone } from '../../utils/phone.js';
-import { getParticipantPhone } from '../../services/whatsappApi.js';
+import { normalizeEmail } from '../../utils/email.js';
+import { getParticipantEmail } from '../../services/deliveryService.js';
 
-export function ExcelDataModal({ isOpen, excel, fields, mappings, phoneColumn, onClose }) {
+export function ExcelDataModal({ isOpen, excel, fields, mappings, emailColumn, onClose }) {
   const [search, setSearch] = useState('');
 
   const headers = excel?.headers || [];
@@ -48,20 +48,20 @@ export function ExcelDataModal({ isOpen, excel, fields, mappings, phoneColumn, o
                 {headers.map(h => (
                   <th key={h} className="py-2 px-3 font-semibold text-primary whitespace-nowrap">
                     {h}
-                    {h === phoneColumn && (
-                      <span className="ml-1 px-1.5 py-0.5 rounded text-[10px] bg-green-100 text-green-700">
-                        Phone
+                    {h === emailColumn && (
+                      <span className="ml-1 px-1.5 py-0.5 rounded text-[10px] bg-blue-100 text-blue-700">
+                        Email
                       </span>
                     )}
                   </th>
                 ))}
-                <th className="py-2 px-3 font-semibold text-muted whitespace-nowrap">WhatsApp Ready</th>
+                <th className="py-2 px-3 font-semibold text-muted whitespace-nowrap">Email Ready</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
               {filteredRows.slice(0, 100).map((row, idx) => {
-                const rawPhone = getParticipantPhone(row, fields, mappings, phoneColumn);
-                const norm = normalizePhone(rawPhone);
+                const rawEmail = getParticipantEmail(row, fields, mappings, emailColumn);
+                const norm = normalizeEmail(rawEmail);
                 return (
                   <tr key={idx} className="hover:bg-bg/50">
                     <td className="py-1.5 px-3 text-muted">{idx + 1}</td>
@@ -72,12 +72,12 @@ export function ExcelDataModal({ isOpen, excel, fields, mappings, phoneColumn, o
                     ))}
                     <td className="py-1.5 px-3 whitespace-nowrap">
                       {norm ? (
-                        <span className="inline-flex items-center text-green-600 font-mono text-[11px]">
-                          ✓ +{norm}
+                        <span className="inline-flex items-center text-blue-600 font-mono text-[11px]">
+                          ✓ {norm}
                         </span>
                       ) : (
-                        <span className="inline-flex items-center text-muted text-[11px]">
-                          {rawPhone ? `⚠ Invalid (${rawPhone})` : '— No Phone'}
+                        <span className="inline-flex items-center text-error text-[11px]">
+                          {rawEmail ? `⚠ Invalid (${rawEmail})` : '— No Email'}
                         </span>
                       )}
                     </td>

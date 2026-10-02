@@ -29,9 +29,9 @@ export function formatPhoneDisplay(normalized) {
   return `+${normalized}`;
 }
 
-/** Phone column header aliases for auto-detection */
+/** Phone column header aliases for general phone fields */
 export const PHONE_ALIASES = [
   'phone', 'phone number', 'mobile', 'mobile number', 'contact',
-  'contact number', 'whatsapp', 'whatsapp number', 'phone_number',
+  'contact number', 'phone_number',
   'mobile_number', 'contact_no', 'mobile_no', 'phone no', 'mobile no',
 ];

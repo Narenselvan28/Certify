@@ -16,7 +16,6 @@ export function DeliveryCenter({ onShowToast }) {
   const templateImg = state.templateImage;
   const fields = state.fields;
   const mappings = state.mappings;
-  const phoneColumn = state.phoneColumn;
   const emailColumn = state.emailColumn;
   const apiBaseUrl = state.delivery?.apiBaseUrl || 'http://localhost:8001';
 
@@ -30,10 +29,9 @@ export function DeliveryCenter({ onShowToast }) {
   const {
     step,
     setStep,
-    channels,
-    toggleChannel,
-    enableFallback,
-    setEnableFallback,
+    brevoStatus,
+    handleSendTestEmail,
+    isTestingEmail,
     isValidating,
     validationResult,
     runPreflightValidation,
@@ -48,7 +46,6 @@ export function DeliveryCenter({ onShowToast }) {
     templateImg,
     fields,
     mappings,
-    phoneColumn,
     emailColumn,
     apiBaseUrl,
     onShowToast,
@@ -94,13 +91,13 @@ export function DeliveryCenter({ onShowToast }) {
             <span>Back to Preview</span>
           </button>
           <div className="h-3.5 w-px bg-border"></div>
-          <span className="text-sm font-semibold text-primary">Delivery Center</span>
+          <span className="text-sm font-semibold text-primary">Email Delivery Center</span>
         </div>
 
         {/* Stepper Pills */}
         <div className="hidden sm:flex items-center space-x-1.5 text-xs text-muted">
-          <span className={`px-2 py-0.5 rounded ${step === 'methods' ? 'bg-accent text-white font-medium' : 'bg-surface border border-border'}`}>
-            1. Channels
+          <span className={`px-2 py-0.5 rounded ${step === 'ready' ? 'bg-accent text-white font-medium' : 'bg-surface border border-border'}`}>
+            1. Setup
           </span>
           <span>→</span>
           <span className={`px-2 py-0.5 rounded ${step === 'preflight' ? 'bg-accent text-white font-medium' : 'bg-surface border border-border'}`}>
@@ -108,7 +105,7 @@ export function DeliveryCenter({ onShowToast }) {
           </span>
           <span>→</span>
           <span className={`px-2 py-0.5 rounded ${step === 'progress' ? 'bg-accent text-white font-medium' : 'bg-surface border border-border'}`}>
-            3. Queue
+            3. Sending
           </span>
           <span>→</span>
           <span className={`px-2 py-0.5 rounded ${step === 'results' ? 'bg-accent text-white font-medium' : 'bg-surface border border-border'}`}>
@@ -129,13 +126,12 @@ export function DeliveryCenter({ onShowToast }) {
 
       {/* Main Container */}
       <main className="flex-1 flex flex-col items-center justify-center p-6 relative">
-        {step === 'methods' && (
+        {step === 'ready' && (
           <DeliveryMethodSelector
             rowCount={rows.length}
-            channels={channels}
-            onToggleChannel={toggleChannel}
-            enableFallback={enableFallback}
-            onToggleFallback={setEnableFallback}
+            brevoStatus={brevoStatus}
+            onSendTestEmail={handleSendTestEmail}
+            isTestingEmail={isTestingEmail}
             onValidate={runPreflightValidation}
             isValidating={isValidating}
             onDownloadZip={handleDownloadZipFallback}
@@ -145,8 +141,7 @@ export function DeliveryCenter({ onShowToast }) {
         {step === 'preflight' && (
           <DeliveryPreflight
             validationResult={validationResult}
-            channels={channels}
-            onBack={() => setStep('methods')}
+            onBack={() => setStep('ready')}
             onStartDelivery={startBulkDelivery}
           />
         )}

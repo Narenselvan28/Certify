@@ -211,7 +211,7 @@ export function UploadPage({ onShowToast }) {
             id: 'field_2',
             type: 'event_name',
             label: 'Event Name',
-            placeholder: 'SPECTRUM 2026',
+            placeholder: '{{EVENT_NAME}}',
             x: 0.25,
             y: 0.69,
             width: 0.50,
@@ -263,7 +263,7 @@ export function UploadPage({ onShowToast }) {
         {/* Logo / Title */}
         <h1 className="text-3xl font-bold tracking-tight text-primary mb-2">Certify</h1>
         <p className="text-sm text-muted mb-8">
-          Client-side bulk certificate generator with WhatsApp delivery
+          Bulk certificate generator with Brevo transactional email delivery
         </p>
 
         {/* Dropzone / Upload Box */}

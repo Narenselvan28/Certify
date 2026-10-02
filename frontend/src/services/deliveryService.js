@@ -1,14 +1,14 @@
 /**
- * Certify Frontend — Multi-Channel Delivery Service
- * Communicates with FastAPI Delivery Center endpoints.
+ * Certify Frontend — Brevo Email Delivery Service
+ * Communicates with FastAPI Brevo Transactional Email delivery endpoints.
  */
 
 import { EMAIL_ALIASES } from '../utils/email.js';
 
 export function getParticipantEmail(row, fields, mappings, emailColumn) {
   if (!row) return '';
-  const emailField = fields.find(f => f.type === 'email');
-  if (emailField && mappings[emailField.id]) {
+  const emailField = fields?.find(f => f.type === 'email');
+  if (emailField && mappings && mappings[emailField.id]) {
     const v = row[mappings[emailField.id]];
     if (v !== undefined && String(v).trim()) return String(v).trim();
   }
@@ -19,19 +19,47 @@ export function getParticipantEmail(row, fields, mappings, emailColumn) {
   // Fallback: scan row keys for email-like names
   for (const key of Object.keys(row)) {
     const clean = key.toLowerCase().trim().replace(/[_\-\.]/g, ' ');
-    if (EMAIL_ALIASES.some(a => clean.includes(a))) {
+    if (EMAIL_ALIASES.some(a => clean === a || clean.includes(a))) {
       if (row[key] && String(row[key]).trim()) return String(row[key]).trim();
     }
   }
   return '';
 }
 
+/** Check Brevo connection & configuration status */
+export async function fetchEmailStatus(apiBaseUrl) {
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/email/status`, {
+    headers: { Accept: 'application/json' },
+  });
+  if (!resp.ok) {
+    throw new Error(`Failed to fetch Brevo status: HTTP ${resp.status}`);
+  }
+  return await resp.json();
+}
+
+/** Send single test email via Brevo */
+export async function sendTestEmail(apiBaseUrl, recipientEmail, recipientName = 'Admin Tester') {
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/email/test`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      recipient_email: recipientEmail,
+      recipient_name: recipientName,
+    }),
+  });
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => resp.statusText);
+    throw new Error(`Test email failed: HTTP ${resp.status} - ${txt}`);
+  }
+  return await resp.json();
+}
+
 /** Preflight validation request */
-export async function validateDelivery(apiBaseUrl, participants, channels) {
+export async function validateDelivery(apiBaseUrl, participants) {
   const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/delivery/validate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ participants, channels }),
+    body: JSON.stringify({ participants }),
   });
   if (!resp.ok) {
     const txt = await resp.text().catch(() => resp.statusText);
@@ -41,11 +69,11 @@ export async function validateDelivery(apiBaseUrl, participants, channels) {
 }
 
 /** Start a bulk delivery background queue */
-export async function startDelivery(apiBaseUrl, participants, channels, enableFallback = true) {
+export async function startDelivery(apiBaseUrl, participants) {
   const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/delivery/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({ participants, channels, enable_fallback: enableFallback }),
+    body: JSON.stringify({ participants }),
   });
   if (!resp.ok) {
     const txt = await resp.text().catch(() => resp.statusText);

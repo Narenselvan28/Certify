@@ -19,6 +19,26 @@ export function getParticipantName(row, fields, mappings) {
 }
 
 /**
+ * Get event name from a row or field configuration.
+ */
+export function getEventName(row, fields, mappings) {
+  const eventField = fields?.find(f => f.type === 'event_name');
+  if (eventField && mappings && mappings[eventField.id] && row?.[mappings[eventField.id]]) {
+    return String(row[mappings[eventField.id]]).trim();
+  }
+  if (eventField && eventField.placeholder) {
+    const ph = eventField.placeholder.replace(/^\{\{|\}\}$/g, '').trim();
+    if (ph) return ph;
+  }
+  if (row) {
+    for (const key of Object.keys(row)) {
+      if (key.toLowerCase().includes('event') && row[key]) return String(row[key]).trim();
+    }
+  }
+  return '';
+}
+
+/**
  * Generate a single PDF for one participant.
  * @returns {{ filename: string, blob: Blob }}
  */

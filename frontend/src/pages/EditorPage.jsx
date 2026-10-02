@@ -2,7 +2,7 @@ import { useRef, useState, useEffect } from 'react';
 import { useAppContext, A } from '../context/AppContext.jsx';
 import { useEditor } from '../hooks/useEditor.js';
 import { parseExcelFile } from '../services/excel.js';
-import { autoMapFields, detectPhoneColumn, detectEmailColumn } from '../utils/mapping.js';
+import { autoMapFields, detectEmailColumn } from '../utils/mapping.js';
 import { clearSession, clearTemplateAsset } from '../services/storage.js';
 
 import { Toolbar } from '../components/editor/Toolbar.jsx';
@@ -115,11 +115,7 @@ export function EditorPage({ onShowToast }) {
       const { mappings, confident } = autoMapFields(state.fields, headers);
       dispatch({ type: A.SET_MAPPINGS, mappings });
 
-      // Detect phone & email columns
-      const detectedPhone = detectPhoneColumn(headers);
-      if (detectedPhone) {
-        dispatch({ type: A.SET_PHONE_COLUMN, phoneColumn: detectedPhone });
-      }
+      // Automatically detect recipient email column
       const detectedEmail = detectEmailColumn(headers);
       if (detectedEmail) {
         dispatch({ type: A.SET_EMAIL_COLUMN, emailColumn: detectedEmail });
@@ -127,8 +123,8 @@ export function EditorPage({ onShowToast }) {
 
       onShowToast?.(`Loaded ${rowCount} rows from ${fileName}`, 'success');
 
-      // If mapping was not 100% confident, suggest opening mapping modal
-      if (!confident && state.fields.length > 0) {
+      // If mapping was not 100% confident or email was not detected, suggest opening mapping modal
+      if ((!confident || !detectedEmail) && state.fields.length > 0) {
         setIsMappingOpen(true);
       }
     } catch (err) {
@@ -138,9 +134,8 @@ export function EditorPage({ onShowToast }) {
   };
 
   // Confirm mapping modal
-  const handleConfirmMapping = (newMappings, newPhone, newEmail) => {
+  const handleConfirmMapping = (newMappings, _newPhone, newEmail) => {
     dispatch({ type: A.SET_MAPPINGS, mappings: newMappings });
-    dispatch({ type: A.SET_PHONE_COLUMN, phoneColumn: newPhone });
     dispatch({ type: A.SET_EMAIL_COLUMN, emailColumn: newEmail });
     setIsMappingOpen(false);
     onShowToast?.('Column mappings updated', 'success');
@@ -224,7 +219,6 @@ export function EditorPage({ onShowToast }) {
         fields={state.fields}
         headers={state.excel?.headers || []}
         mappings={state.mappings || {}}
-        phoneColumn={state.phoneColumn}
         emailColumn={state.emailColumn}
         onConfirm={handleConfirmMapping}
         onCancel={() => setIsMappingOpen(false)}
@@ -241,7 +235,7 @@ export function EditorPage({ onShowToast }) {
         excel={state.excel}
         fields={state.fields}
         mappings={state.mappings}
-        phoneColumn={state.phoneColumn}
+        emailColumn={state.emailColumn}
         onClose={() => setIsDataViewOpen(false)}
       />
     </div>

@@ -1,19 +1,21 @@
 """
 Certify Backend — FastAPI Application Entry Point
-Stateless backend for bulk WhatsApp and Email certificate delivery with queues and retry.
+Streamlined backend for bulk certificate delivery via Brevo Transactional Email API.
 """
 
+import base64
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Response, HTTPException, status
+from fastapi import FastAPI, Request, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.config import settings
 from app.schemas import (
-    SendCertificateRequest,
-    SendCertificateResponse,
+    EmailStatusResponse,
+    EmailTestRequest,
+    EmailTestResponse,
     DeliveryValidateRequest,
     DeliveryValidateResponse,
     DeliveryStartRequest,
@@ -22,8 +24,8 @@ from app.schemas import (
     DeliveryResultsResponse,
     DeliveryRetryResponse,
 )
-from app.services.certificate_sender import process_send_request
-from app.services.delivery_manager import delivery_manager
+from app.services.email_service import send_certificate_email
+from app.services.delivery_service import delivery_service
 
 # ── Logging ────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -36,18 +38,17 @@ logger = logging.getLogger(__name__)
 # ── Lifespan ───────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    wa_mode = "TEST MODE" if settings.WHATSAPP_TEST_MODE else "PRODUCTION"
-    em_mode = "TEST MODE" if settings.EMAIL_TEST_MODE else "PRODUCTION"
-    logger.info("🚀 Certify Backend starting [WhatsApp: %s | Email: %s]", wa_mode, em_mode)
+    mode = "TEST MODE (Simulated)" if settings.BREVO_TEST_MODE else "PRODUCTION (Live Brevo API)"
+    logger.info("🚀 Certify Backend starting [Provider: Brevo | Mode: %s]", mode)
     yield
     logger.info("Certify Backend shutting down.")
 
 
 # ── App ────────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="Certify Multi-Channel Delivery Backend",
-    description="Stateless, in-memory delivery queue for bulk WhatsApp and Email certificate delivery.",
-    version="2.0.0",
+    title="Certify Brevo Email Delivery Backend",
+    description="Stateless in-memory delivery service for bulk certificate delivery via Brevo Transactional Email.",
+    version="3.0.0",
     docs_url="/docs",
     redoc_url=None,
     lifespan=lifespan,
@@ -76,17 +77,89 @@ async def global_exception_handler(request: Request, exc: Exception):
 # ── Health ─────────────────────────────────────────────────────────────────
 @app.get("/health", tags=["Health"])
 async def health():
-    """Health check endpoint. Does NOT expose any secrets."""
+    """Health check endpoint. Never exposes any secrets."""
     return {
         "status": "ok",
-        "whatsapp_test_mode": settings.WHATSAPP_TEST_MODE,
-        "email_test_mode": settings.EMAIL_TEST_MODE,
-        "api_version": settings.WHATSAPP_API_VERSION,
-        "concurrency": settings.DELIVERY_CONCURRENCY,
+        "provider": "brevo",
+        "configured": settings.is_configured,
+        "test_mode": settings.BREVO_TEST_MODE,
+        "sender_email": settings.BREVO_SENDER_EMAIL or None,
     }
 
 
-# ── Delivery Center API Endpoints ──────────────────────────────────────────
+# ── Brevo Email Admin Endpoints ────────────────────────────────────────────
+
+@app.get(
+    "/api/email/status",
+    response_model=EmailStatusResponse,
+    tags=["Email"],
+    summary="Check Brevo connection & configuration status",
+)
+async def get_email_status() -> EmailStatusResponse:
+    """
+    Returns Brevo configuration status without revealing the API key.
+    """
+    return EmailStatusResponse(
+        provider="brevo",
+        configured=settings.is_configured,
+        test_mode=settings.BREVO_TEST_MODE,
+        sender_email=settings.BREVO_SENDER_EMAIL or None,
+        sender_name=settings.BREVO_SENDER_NAME or None,
+    )
+
+
+@app.post(
+    "/api/email/test",
+    response_model=EmailTestResponse,
+    tags=["Email"],
+    summary="Send a single test email to verify Brevo configuration",
+)
+async def send_test_email(req: EmailTestRequest) -> EmailTestResponse:
+    """
+    Dispatches a single test email with sample certificate to verify Brevo connection.
+    Does not require generating an entire certificate batch.
+    """
+    # Create a minimal 1-page valid PDF header for the test email attachment
+    minimal_sample_pdf_bytes = (
+        b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+        b"2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n"
+        b"3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<<>>>>endobj\n"
+        b"xref\n0 4\n0000000000 65535 f\n0000000010 00000 n\n0000000053 00000 n\n0000000102 00000 n\n"
+        b"trailer<</Size 4/Root 1 0 R>>\nstartxref\n178\n%%EOF\n"
+    )
+    sample_b64 = base64.b64encode(minimal_sample_pdf_bytes).decode("ascii")
+
+    res = await send_certificate_email(
+        recipient_email=req.recipient_email,
+        recipient_name=req.recipient_name,
+        subject="Certify Test Certificate",
+        body=(
+            f"Hello {req.recipient_name},\n\n"
+            f"This is a test certificate email from Certify.\n"
+            f"If you received this, your Brevo email configuration is working correctly!\n\n"
+            f"Regards,\n{settings.BREVO_SENDER_NAME}"
+        ),
+        pdf_base64=sample_b64,
+        filename="Sample_Certificate.pdf",
+    )
+
+    if res["success"]:
+        return EmailTestResponse(
+            success=True,
+            message="Test email sent successfully" if not res["test_mode"] else "Test email simulated successfully (Test Mode)",
+            message_id=res["message_id"],
+            test_mode=res["test_mode"],
+        )
+    else:
+        return EmailTestResponse(
+            success=False,
+            message=res["error"] or "Failed to send test email",
+            message_id=None,
+            test_mode=res["test_mode"],
+        )
+
+
+# ── Bulk Delivery API Endpoints ────────────────────────────────────────────
 
 @app.post(
     "/api/delivery/validate",
@@ -96,36 +169,31 @@ async def health():
 )
 async def validate_delivery(req: DeliveryValidateRequest) -> DeliveryValidateResponse:
     """
-    Validate participant phone numbers, email addresses, and certificate sizes
-    before committing to bulk delivery.
+    Validate participant email addresses and certificate attachment sizes
+    before starting bulk delivery.
     """
-    return delivery_manager.validate_batch(req)
+    return delivery_service.validate_batch(req)
 
 
 @app.post(
     "/api/delivery/start",
     response_model=DeliveryStartResponse,
     tags=["Delivery"],
-    summary="Start a background bulk delivery job",
+    summary="Start background bulk email delivery",
 )
 async def start_delivery(req: DeliveryStartRequest) -> DeliveryStartResponse:
     """
-    Enqueue certificates for delivery via selected channels (WhatsApp, Email)
-    with rate control, controlled retries, and fallback channel execution.
+    Enqueue certificates for sequential rate-controlled delivery via Brevo.
     """
     if not req.participants:
         raise HTTPException(status_code=400, detail="Participant list cannot be empty")
 
-    delivery_id = delivery_manager.start_delivery(
-        participants=req.participants,
-        channels=req.channels,
-        enable_fallback=req.enable_fallback,
-    )
+    delivery_id = delivery_service.start_delivery(participants=req.participants)
 
     return DeliveryStartResponse(
         delivery_id=delivery_id,
         total=len(req.participants),
-        message="Delivery queue initiated",
+        message="Delivery session initiated",
     )
 
 
@@ -138,9 +206,9 @@ async def start_delivery(req: DeliveryStartRequest) -> DeliveryStartResponse:
 async def get_delivery_status(delivery_id: str) -> DeliveryStatusResponse:
     """
     Polling endpoint returning total, pending, processing, sent, failed, retrying,
-    skipped counts, progress percentage, and currently sending participant info.
+    skipped counts, progress percentage, and currently sending recipient info.
     """
-    st = delivery_manager.get_status(delivery_id)
+    st = delivery_service.get_status(delivery_id)
     if not st:
         raise HTTPException(status_code=404, detail="Delivery session not found or expired")
     return st
@@ -155,9 +223,9 @@ async def get_delivery_status(delivery_id: str) -> DeliveryStatusResponse:
 async def get_delivery_results(delivery_id: str) -> DeliveryResultsResponse:
     """
     Detailed breakdown of all jobs with per-participant delivery status,
-    error messages, attempt counts, and fallback results.
+    attempt counts, and errors.
     """
-    res = delivery_manager.get_results(delivery_id)
+    res = delivery_service.get_results(delivery_id)
     if not res:
         raise HTTPException(status_code=404, detail="Delivery session not found or expired")
     return res
@@ -167,19 +235,19 @@ async def get_delivery_results(delivery_id: str) -> DeliveryResultsResponse:
     "/api/delivery/{delivery_id}/retry",
     response_model=DeliveryRetryResponse,
     tags=["Delivery"],
-    summary="Retry temporary/retryable failed deliveries",
+    summary="Retry transient failed deliveries",
 )
 async def retry_failed_deliveries(delivery_id: str) -> DeliveryRetryResponse:
     """
-    Retry only jobs that encountered temporary/retryable failures
-    (e.g., 429 rate limit, timeouts, temporary server errors).
-    Permanent errors (invalid phone/email) will not be re-attempted.
+    Retry only jobs that encountered retryable failures (e.g. 429 rate limit,
+    temporary server errors, timeouts). Permanent errors (invalid email address)
+    will not be re-attempted.
     """
-    count = delivery_manager.retry_failed(delivery_id)
+    count = delivery_service.retry_failed(delivery_id)
     return DeliveryRetryResponse(
         delivery_id=delivery_id,
         retrying_count=count,
-        message=f"Retrying {count} temporary failed jobs" if count > 0 else "No retryable failed jobs found",
+        message=f"Retrying {count} failed jobs" if count > 0 else "No retryable failed jobs found",
     )
 
 
@@ -191,9 +259,9 @@ async def retry_failed_deliveries(delivery_id: str) -> DeliveryRetryResponse:
 async def download_delivery_report(delivery_id: str):
     """
     Generate and stream a CSV delivery report containing every participant,
-    channel, final status, attempt count, fallback details, error, and timestamp.
+    email, status, attempt count, error, and timestamp.
     """
-    csv_content = delivery_manager.generate_csv_report(delivery_id)
+    csv_content = delivery_service.generate_csv_report(delivery_id)
     if not csv_content:
         raise HTTPException(status_code=404, detail="Delivery session not found or expired")
 
@@ -204,16 +272,3 @@ async def download_delivery_report(delivery_id: str):
             "Content-Disposition": f'attachment; filename="delivery_report_{delivery_id}.csv"'
         },
     )
-
-
-# ── Legacy Single WhatsApp Send Endpoint ───────────────────────────────────
-
-@app.post(
-    "/api/whatsapp/send",
-    response_model=SendCertificateResponse,
-    tags=["WhatsApp"],
-    summary="Legacy single WhatsApp send",
-)
-async def send_single_whatsapp(req: SendCertificateRequest) -> SendCertificateResponse:
-    """Backward compatibility endpoint for single WhatsApp message delivery."""
-    return await process_send_request(req)

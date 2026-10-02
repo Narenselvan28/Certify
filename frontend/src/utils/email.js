@@ -1,8 +1,19 @@
-// Email validation utilities for client-side preflight
+// Email validation and aliases for client-side preflight and column auto-mapping
 
 export const EMAIL_ALIASES = [
-  'email', 'email address', 'e-mail', 'mail', 'student email', 'contact email',
-  'participant email', 'email_id', 'email id', 'e_mail', 'mail_id',
+  'email',
+  'email address',
+  'e-mail',
+  'e-mail address',
+  'e mail',
+  'mail',
+  'mail id',
+  'mail_id',
+  'email_id',
+  'email id',
+  'student email',
+  'contact email',
+  'participant email',
 ];
 
 const EMAIL_REGEX = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)+$/;

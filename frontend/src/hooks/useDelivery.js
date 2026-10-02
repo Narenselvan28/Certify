@@ -1,10 +1,12 @@
 /**
  * Certify Frontend — useDelivery Hook
- * Manages Multi-Channel Delivery lifecycle: Selection → Preflight → Progress → Results → Retry
+ * Manages Brevo Transactional Email delivery lifecycle: Preflight → Progress → Results → Retry
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import {
+  fetchEmailStatus,
+  sendTestEmail,
   validateDelivery,
   startDelivery,
   getDeliveryStatus,
@@ -13,22 +15,27 @@ import {
   downloadDeliveryReport,
   getParticipantEmail,
 } from '../services/deliveryService.js';
-import { getParticipantPhone, getEventName } from '../services/whatsappApi.js';
-import { getParticipantName, generateSinglePDF } from '../services/pdfExporter.js';
+import { getParticipantName, getEventName, generateSinglePDF } from '../services/pdfExporter.js';
 
 export function useDelivery({
   rows = [],
   templateImg,
   fields = [],
   mappings = {},
-  phoneColumn,
   emailColumn,
   apiBaseUrl = 'http://localhost:8001',
   onShowToast,
 }) {
-  const [step, setStep] = useState('methods'); // 'methods' | 'preflight' | 'progress' | 'results'
-  const [channels, setChannels] = useState(['whatsapp', 'email']);
-  const [enableFallback, setEnableFallback] = useState(true);
+  const [step, setStep] = useState('ready'); // 'ready' | 'preflight' | 'progress' | 'results'
+
+  // Brevo configuration status
+  const [brevoStatus, setBrevoStatus] = useState({
+    configured: false,
+    test_mode: true,
+    sender_email: '',
+    sender_name: 'Certify',
+    loading: true,
+  });
 
   // Preflight validation state
   const [isValidating, setIsValidating] = useState(false);
@@ -52,6 +59,7 @@ export function useDelivery({
   // Final results state
   const [results, setResults] = useState(null);
   const [isRetrying, setIsRetrying] = useState(false);
+  const [isTestingEmail, setIsTestingEmail] = useState(false);
 
   const pollTimer = useRef(null);
 
@@ -62,15 +70,46 @@ export function useDelivery({
     };
   }, []);
 
-  const toggleChannel = useCallback((channel) => {
-    setChannels(prev => {
-      if (prev.includes(channel)) {
-        if (prev.length === 1) return prev; // At least one channel must be active
-        return prev.filter(c => c !== channel);
+  // Fetch Brevo configuration status
+  const refreshBrevoStatus = useCallback(async () => {
+    try {
+      const data = await fetchEmailStatus(apiBaseUrl);
+      setBrevoStatus({
+        configured: data.configured,
+        test_mode: data.test_mode,
+        sender_email: data.sender_email || '',
+        sender_name: data.sender_name || 'Certify',
+        loading: false,
+      });
+    } catch (err) {
+      setBrevoStatus(prev => ({ ...prev, loading: false }));
+    }
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
+    refreshBrevoStatus();
+  }, [refreshBrevoStatus]);
+
+  // Admin Single Test Email
+  const handleSendTestEmail = useCallback(async (testRecipient) => {
+    if (!testRecipient || !testRecipient.includes('@')) {
+      onShowToast?.('Please enter a valid email address for testing', 'error');
+      return;
+    }
+    setIsTestingEmail(true);
+    try {
+      const res = await sendTestEmail(apiBaseUrl, testRecipient);
+      if (res.success) {
+        onShowToast?.(res.message, 'success');
+      } else {
+        onShowToast?.(`Test email failed: ${res.message}`, 'error');
       }
-      return [...prev, channel];
-    });
-  }, []);
+    } catch (err) {
+      onShowToast?.(`Test failed: ${err.message}`, 'error');
+    } finally {
+      setIsTestingEmail(false);
+    }
+  }, [apiBaseUrl, onShowToast]);
 
   // ── Step 1 → 2: Run Preflight Validation ─────────────────────────────────
   const runPreflightValidation = useCallback(async () => {
@@ -79,12 +118,11 @@ export function useDelivery({
       const items = rows.map((r, idx) => ({
         index: idx + 1,
         name: getParticipantName(r, fields, mappings),
-        phone: getParticipantPhone(r, fields, mappings, phoneColumn),
         email: getParticipantEmail(r, fields, mappings, emailColumn),
         certificate_size_bytes: null,
       }));
 
-      const res = await validateDelivery(apiBaseUrl, items, channels);
+      const res = await validateDelivery(apiBaseUrl, items);
       setValidationResult(res);
       setStep('preflight');
     } catch (err) {
@@ -93,16 +131,15 @@ export function useDelivery({
     } finally {
       setIsValidating(false);
     }
-  }, [rows, fields, mappings, phoneColumn, emailColumn, apiBaseUrl, channels, onShowToast]);
+  }, [rows, fields, mappings, emailColumn, apiBaseUrl, onShowToast]);
 
   // ── Step 2 → 3: Start Queue Processing ────────────────────────────────────
   const startBulkDelivery = useCallback(async () => {
     if (!templateImg || rows.length === 0) return;
     setStep('progress');
-    onShowToast?.('Rendering certificates and enqueuing delivery...', 'info');
+    onShowToast?.('Generating certificate PDFs and initiating delivery...', 'info');
 
     try {
-      // Generate in-memory PDF payloads for each participant
       const participants = [];
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
@@ -115,19 +152,22 @@ export function useDelivery({
         for (let b = 0; b < bytes.length; b++) bin += String.fromCharCode(bytes[b]);
         const b64 = btoa(bin);
 
+        const regNo = row['reg_no'] || row['Reg No'] || row['Roll No'] || row['regno'] || '';
+        const dept = row['department'] || row['Department'] || row['Dept'] || '';
+
         participants.push({
           id: `p_${i + 1}`,
           sno: String(i + 1),
           name: getParticipantName(row, fields, mappings),
-          phone: getParticipantPhone(row, fields, mappings, phoneColumn),
           email: getParticipantEmail(row, fields, mappings, emailColumn),
-          reg_no: row.reg_no || row['Reg No'] || '',
+          reg_no: regNo,
+          department: dept,
           event_name: getEventName(row, fields, mappings),
           certificate: { filename, base64: b64 },
         });
       }
 
-      const startRes = await startDelivery(apiBaseUrl, participants, channels, enableFallback);
+      const startRes = await startDelivery(apiBaseUrl, participants);
       const newDeliveryId = startRes.delivery_id;
       setDeliveryId(newDeliveryId);
 
@@ -144,7 +184,7 @@ export function useDelivery({
             const res = await getDeliveryResults(apiBaseUrl, newDeliveryId);
             setResults(res);
             setStep('results');
-            onShowToast?.('Delivery batch completed!', 'success');
+            onShowToast?.('Certificate delivery completed!', 'success');
           }
         } catch (err) {
           console.warn('Status poll error:', err);
@@ -156,10 +196,10 @@ export function useDelivery({
 
     } catch (err) {
       console.error('Start delivery failed:', err);
-      onShowToast?.(`Delivery initiation failed: ${err.message}`, 'error');
-      setStep('preflight');
+      onShowToast?.(`Delivery failed to start: ${err.message}`, 'error');
+      setStep('ready');
     }
-  }, [templateImg, rows, fields, mappings, phoneColumn, emailColumn, apiBaseUrl, channels, enableFallback, onShowToast]);
+  }, [templateImg, rows, fields, mappings, emailColumn, apiBaseUrl, onShowToast]);
 
   // ── Retry Failed Deliveries ──────────────────────────────────────────────
   const handleRetryFailed = useCallback(async () => {
@@ -168,7 +208,7 @@ export function useDelivery({
     try {
       const res = await retryFailedDelivery(apiBaseUrl, deliveryId);
       if (res.retrying_count > 0) {
-        onShowToast?.(`Retrying ${res.retrying_count} temporary failed jobs`, 'info');
+        onShowToast?.(`Retrying ${res.retrying_count} failed deliveries`, 'info');
         setStep('progress');
 
         // Resume status polling
@@ -214,10 +254,10 @@ export function useDelivery({
   return {
     step,
     setStep,
-    channels,
-    toggleChannel,
-    enableFallback,
-    setEnableFallback,
+    brevoStatus,
+    refreshBrevoStatus,
+    handleSendTestEmail,
+    isTestingEmail,
     isValidating,
     validationResult,
     runPreflightValidation,

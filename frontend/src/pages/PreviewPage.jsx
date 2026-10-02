@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useAppContext, A } from '../context/AppContext.jsx';
 import { clearSession, clearTemplateAsset } from '../services/storage.js';
 
@@ -8,13 +8,10 @@ import { GridPreview } from '../components/preview/GridPreview.jsx';
 
 import { ExportModal } from '../components/modals/ExportModal.jsx';
 import { ProgressModal } from '../components/modals/ProgressModal.jsx';
-import { WAConfirmModal } from '../components/modals/WAConfirmModal.jsx';
-import { WAProgressModal } from '../components/modals/WAProgressModal.jsx';
 import { RestartModal } from '../components/modals/RestartModal.jsx';
 
 import { exportZip } from '../services/zipExporter.js';
 import { exportCombinedPDF } from '../services/pdfExporter.js';
-import { sendOneCertificate } from '../services/whatsappApi.js';
 
 export function PreviewPage({ onShowToast }) {
   const { state, dispatch, clearHistory } = useAppContext();
@@ -26,7 +23,6 @@ export function PreviewPage({ onShowToast }) {
 
   // Modals state
   const [isExportOpen, setIsExportOpen] = useState(false);
-  const [isWAConfirmOpen, setIsWAConfirmOpen] = useState(false);
   const [isRestartOpen, setIsRestartOpen] = useState(false);
 
   // Export progress
@@ -35,17 +31,6 @@ export function PreviewPage({ onShowToast }) {
     current: 0,
     total: 0,
     statusText: '',
-  });
-
-  // WhatsApp bulk progress
-  const [waProgress, setWaProgress] = useState({
-    isOpen: false,
-    current: 0,
-    total: 0,
-    statusText: '',
-    sent: 0,
-    failed: 0,
-    skipped: 0,
   });
 
   // Ensure template image element exists
@@ -147,74 +132,6 @@ export function PreviewPage({ onShowToast }) {
     }
   };
 
-  // ── WhatsApp Bulk Delivery ────────────────────────────────────────────────
-
-  const handleStartWhatsAppBulk = async () => {
-    setIsWAConfirmOpen(false);
-    const apiBaseUrl = state.delivery?.apiBaseUrl || 'http://localhost:8001';
-
-    setWaProgress({
-      isOpen: true,
-      current: 0,
-      total: rows.length,
-      statusText: 'Starting WhatsApp delivery queue...',
-      sent: 0,
-      failed: 0,
-      skipped: 0,
-    });
-
-    let sentCount = 0;
-    let failedCount = 0;
-    let skippedCount = 0;
-
-    for (let i = 0; i < rows.length; i++) {
-      const row = rows[i];
-      setWaProgress(prev => ({
-        ...prev,
-        current: i + 1,
-        statusText: `Sending certificate ${i + 1} of ${rows.length}...`,
-      }));
-
-      try {
-        const res = await sendOneCertificate(
-          apiBaseUrl,
-          row,
-          i,
-          templateImg,
-          state.fields,
-          state.mappings,
-          state.phoneColumn
-        );
-
-        if (res.status === 'sent') sentCount++;
-        else if (res.status === 'skipped') skippedCount++;
-        else failedCount++;
-      } catch (err) {
-        failedCount++;
-      }
-
-      setWaProgress(prev => ({
-        ...prev,
-        sent: sentCount,
-        failed: failedCount,
-        skipped: skippedCount,
-      }));
-
-      // Throttle slightly to prevent local overload
-      await new Promise(r => setTimeout(r, 400));
-    }
-
-    setWaProgress(prev => ({
-      ...prev,
-      statusText: `Delivery complete! Sent: ${sentCount}, Failed: ${failedCount}, Skipped: ${skippedCount}`,
-    }));
-
-    onShowToast?.(
-      `WhatsApp delivery finished: ${sentCount} sent, ${failedCount} failed`,
-      failedCount === 0 ? 'success' : 'info'
-    );
-  };
-
   return (
     <div className="flex-1 flex flex-col h-screen overflow-hidden bg-bg">
       {/* Top Navbar */}
@@ -225,7 +142,6 @@ export function PreviewPage({ onShowToast }) {
         onBack={handleBackToEditor}
         onRestart={() => setIsRestartOpen(true)}
         onOpenExport={() => setIsExportOpen(true)}
-        onOpenWhatsApp={() => setIsWAConfirmOpen(true)}
         onOpenDeliveryCenter={() => dispatch({ type: A.SET_PAGE, page: 'delivery' })}
       />
 
@@ -239,7 +155,7 @@ export function PreviewPage({ onShowToast }) {
             templateImg={templateImg}
             fields={state.fields}
             mappings={state.mappings}
-            phoneColumn={state.phoneColumn}
+            emailColumn={state.emailColumn}
             apiBaseUrl={state.delivery?.apiBaseUrl || 'http://localhost:8001'}
             onNavigate={handleNavigate}
             onShowToast={onShowToast}
@@ -250,24 +166,21 @@ export function PreviewPage({ onShowToast }) {
             templateImg={templateImg}
             fields={state.fields}
             mappings={state.mappings}
-            phoneColumn={state.phoneColumn}
-            apiBaseUrl={state.delivery?.apiBaseUrl || 'http://localhost:8001'}
-            onSelectIndex={handleSelectFromGrid}
-            onShowToast={onShowToast}
+            emailColumn={state.emailColumn}
+            onSelectParticipant={handleSelectFromGrid}
           />
         )}
       </main>
 
-      {/* Export Selection Modal */}
+      {/* Export Options Modal (ZIP / Combined PDF) */}
       <ExportModal
         isOpen={isExportOpen}
-        rowCount={total}
-        onCancel={() => setIsExportOpen(false)}
+        onClose={() => setIsExportOpen(false)}
         onExportZip={handleExportZip}
         onExportCombined={handleExportCombined}
       />
 
-      {/* Export Progress Modal */}
+      {/* PDF Export Progress Modal */}
       <ProgressModal
         isOpen={exportProgress.isOpen}
         current={exportProgress.current}
@@ -275,37 +188,11 @@ export function PreviewPage({ onShowToast }) {
         statusText={exportProgress.statusText}
       />
 
-      {/* WhatsApp Confirm Modal */}
-      <WAConfirmModal
-        isOpen={isWAConfirmOpen}
-        rows={rows}
-        fields={state.fields}
-        mappings={state.mappings}
-        phoneColumn={state.phoneColumn}
-        apiBaseUrl={state.delivery?.apiBaseUrl || 'http://localhost:8001'}
-        onApiUrlChange={(url) =>
-          dispatch({ type: A.SET_DELIVERY, delivery: { apiBaseUrl: url } })
-        }
-        onCancel={() => setIsWAConfirmOpen(false)}
-        onStart={handleStartWhatsAppBulk}
-      />
-
-      {/* WhatsApp Delivery Live Progress Modal */}
-      <WAProgressModal
-        isOpen={waProgress.isOpen}
-        current={waProgress.current}
-        total={waProgress.total}
-        statusText={waProgress.statusText}
-        sent={waProgress.sent}
-        failed={waProgress.failed}
-        skipped={waProgress.skipped}
-      />
-
-      {/* Restart Modal */}
+      {/* Confirm Restart Modal */}
       <RestartModal
         isOpen={isRestartOpen}
-        onCancel={() => setIsRestartOpen(false)}
         onConfirm={handleConfirmRestart}
+        onCancel={() => setIsRestartOpen(false)}
       />
     </div>
   );

@@ -1,176 +1,166 @@
-# Certify — Bulk Certificate Generator & Multi-Channel Delivery Platform
+# Certify — Bulk Certificate Generator & Brevo Email Delivery
 
-**Certify** is a modern certificate generation and automated multi-channel delivery platform. It pairs a **100% client-side React visual certificate designer** with a **stateless FastAPI delivery queue backend** supporting official **Meta WhatsApp Cloud API**, **SMTP Email delivery**, and **ZIP export fallback**.
-
----
-
-## 🌟 Key Architecture & Capabilities
+Certify is a modern certificate generation and bulk email delivery application. It pairs an in-browser visual certificate designer and bulk PDF renderer with a lightweight FastAPI backend for transactional email delivery via **Brevo**.
 
 ```text
-                    CERTIFY
-                       │
-                Generate Certificates
-                       │
-                       ▼
-                 Delivery Center
-                       │
-          ┌────────────┼────────────┐
-          │            │            │
-          ▼            ▼            ▼
-      WhatsApp       Email      ZIP Download
-          │            │            │
-          └────────────┼────────────┘
-                       ▼
-                Delivery Queue
-          (Rate control · Concurrency)
-                       │
-                       ▼
-            Retry & Transient Recovery
-          (429 · Timeouts · Backoff)
-                       │
-                       ▼
-               Final CSV Report
+React Frontend
+      ↓
+FastAPI Backend
+      ↓
+Brevo Transactional Email
+      ↓
+Participant Email
+      ↓
+Certificate PDF
 ```
-
-### Frontend (React.js + Tailwind CSS)
-* **Visual Certificate Editor**: Drag, 8-point resize handles, and 360° rotation with angle snapping.
-* **Smart Auto-Fit**: Dynamically scales typography when participant names overflow.
-* **Curated Typography**: 27 categorized Google Fonts (Sans-serif, Serif, Display, Handwriting).
-* **Excel / CSV Import**: SheetJS parser with automatic fuzzy column detection for `Name`, `Reg No`, `Department`, `WhatsApp Phone`, and `Email`.
-* **Previews**: Interactive Single Preview carousel and thumbnail Grid View.
-* **Persistent Session**: Auto-saved to `localStorage` and `IndexedDB`—refreshing never loses your work.
-
-### Backend (Python FastAPI)
-* **No Database**: Stateless in-memory queue. No credentials, recipient data, or certificates are stored permanently.
-* **Multi-Channel Delivery**:
-  * **WhatsApp**: Official Meta WhatsApp Business Cloud API with temporary in-memory media upload.
-  * **Email**: SMTP dispatch with TLS/SSL, customizable subject/body, and PDF attachment.
-  * **Fallback**: Automatic fallback to Email when a participant's WhatsApp delivery fails.
-* **Controlled Concurrency & Rate Limiting**: Inter-job delays (`DELIVERY_DELAY_MS`) and dynamic 429 backoff.
-* **Smart Retry System**: Exponential backoff for transient network errors and rate limits; permanent failures (invalid numbers/emails) are never endlessly retried.
-* **Auditing & Reporting**: Generates a downloadable CSV report for every delivery run.
 
 ---
 
-## 🚀 Quick Start Guide
+## Architecture
 
-### Prerequisites
-* **Node.js** (v18+)
-* **Python** (v3.10+)
+* **Frontend**: React + Vite (Tailwind CSS, SheetJS, jsPDF, html2canvas)
+* **Backend**: FastAPI (Python 3.11+, `httpx`)
+* **Email Provider**: Brevo Transactional Email REST API
+* **Client Storage**: Browser session & IndexedDB for offline template persistence
+* **Database**: **None** (Stateless in-memory sessions)
 
-### 1. Start the FastAPI Backend
-```powershell
+---
+
+## Features
+
+* **Visual Certificate Editor**:
+  * Drag-and-drop template upload (PNG, JPG, WEBP up to 4K).
+  * Field positioning, 8-point resizing, rotation, font selection, alignment, color picker.
+  * Auto-fit text bounding boxes and multi-level Undo/Redo.
+* **Excel / CSV Import & Auto-Mapping**:
+  * Fuzzy auto-mapping of fields: Name, Reg No, Department, Event Name, and Email.
+  * Automatic detection of email columns (`Email`, `Email Address`, `E-mail`, `Mail`, `Mail ID`).
+* **Certificate Preview & Export**:
+  * High-fidelity single certificate preview and responsive grid view.
+  * Instant single PDF download.
+  * Combined multi-page PDF generation.
+  * Bulk ZIP export fallback.
+* **Brevo Email Delivery Center**:
+  * Preflight validation of recipient emails and PDF attachment sizes.
+  * Controlled rate-limited delivery queue.
+  * Real-time progress bar with active recipient details.
+  * Exponential backoff retry for transient errors (HTTP 429, 500, timeouts).
+  * Detailed results view with single-click retry for failed deliveries.
+  * Downloadable CSV delivery report.
+  * Admin single test email verification.
+  * Safe simulation test mode (`BREVO_TEST_MODE=true`).
+
+---
+
+## Setup & Getting Started
+
+### Step 1: Create a Brevo Account
+Sign up for a free account at [Brevo (formerly Sendinblue)](https://www.brevo.com/).
+
+### Step 2: Verify Sender or Domain
+In the Brevo Dashboard, navigate to **Senders, Domains & Dedicated IPs** and add/verify your sender email address (e.g. `certificates@example.com`).
+
+### Step 3: Generate a Brevo API Key
+Navigate to **SMTP & API** → **API Keys** in Brevo and generate a new API key.
+
+### Step 4: Create Backend Environment File
+In the `backend/` directory, copy `.env.example` to `.env`:
+
+```bash
+cd backend
+cp .env.example .env
+```
+
+### Step 5: Configure Brevo Credentials
+Edit `backend/.env`:
+
+```env
+BREVO_API_KEY=xkeysib-your-actual-api-key-here
+BREVO_SENDER_EMAIL=certificates@example.com
+BREVO_SENDER_NAME=Certify
+BREVO_TEST_MODE=true
+
+MAX_EMAIL_RETRIES=3
+EMAIL_SEND_DELAY_MS=100
+EMAIL_BATCH_SIZE=50
+
+MAX_CERTIFICATE_SIZE_MB=10
+ALLOWED_ORIGINS=http://localhost:5173
+```
+
+> **Security Note:** The API key exists strictly backend-only in `backend/.env`. It is never exposed to the React frontend, browser storage, or Git repository.
+
+### Step 6: Start FastAPI Backend
+
+```bash
 cd backend
 python -m venv .venv
-.venv\Scripts\activate       # On Linux/macOS: source .venv/bin/activate
+# On Windows:
+.venv\Scripts\activate
+# On Linux/macOS:
+source .venv/bin/activate
+
 pip install -r requirements.txt
-cp .env.example .env
 uvicorn app.main:app --reload --port 8001
 ```
-* Backend health check: [http://localhost:8001/health](http://localhost:8001/health)
-* Interactive Swagger documentation: [http://localhost:8001/docs](http://localhost:8001/docs)
 
-### 2. Start the React Frontend
-In a second terminal:
-```powershell
+### Step 7: Start React Frontend
+
+In a separate terminal:
+
+```bash
 cd frontend
 npm install
 npm run dev
 ```
-* Web application: [http://localhost:5173](http://localhost:5173)
 
----
+Open your browser to `http://localhost:5173`.
 
-## ⚙️ Configuration & Environment Variables
+### Step 8: Use the Test Email Feature
+In the application, proceed to the **Delivery Center** and click **Send Test Email** to send a single sample certificate to your email address and verify connectivity.
 
-Create a `.env` file in the `backend/` directory by copying `.env.example`:
+### Step 9: Test with a Small Participant List
+Upload an Excel file with 2–5 participant records, map the columns, generate certificates, and run delivery in Test Mode (`BREVO_TEST_MODE=true`). Check the progress bar and downloadable report.
+
+### Step 10: Switch to Production
+When ready to deliver real certificates to participants, set in `backend/.env`:
 
 ```env
-# ===============================
-# 1. WHATSAPP CLOUD API
-# ===============================
-WHATSAPP_ACCESS_TOKEN=your_meta_system_user_token
-WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id
-WHATSAPP_BUSINESS_ACCOUNT_ID=your_waba_id
-WHATSAPP_API_VERSION=v19.0
-CERTIFICATE_TEMPLATE_NAME=certificate_delivery
-CERTIFICATE_TEMPLATE_LANGUAGE=en
-
-# Set to true for local testing without calling Meta API:
-WHATSAPP_TEST_MODE=true
-
-# ===============================
-# 2. EMAIL (SMTP)
-# ===============================
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USERNAME=your_email@gmail.com
-SMTP_PASSWORD=your_app_password
-SMTP_FROM_EMAIL=your_email@gmail.com
-SMTP_FROM_NAME=Certify
-SMTP_USE_TLS=true
-
-# Set to true for local testing without sending actual emails:
-EMAIL_TEST_MODE=true
-
-# ===============================
-# 3. DELIVERY QUEUE
-# ===============================
-MAX_DELIVERY_RETRIES=3
-DELIVERY_CONCURRENCY=1
-DELIVERY_DELAY_MS=500
-DELIVERY_SIMULATE_FAILURE_RATE=0.0
-MAX_CERTIFICATE_SIZE_MB=10
-
-# ===============================
-# 4. CORS
-# ===============================
-ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+BREVO_TEST_MODE=false
 ```
 
----
-
-## 📱 Meta WhatsApp Setup
-
-1. Log into [Meta for Developers](https://developers.facebook.com/) and create a **Business** application.
-2. Add the **WhatsApp** product.
-3. Under **API Setup**, retrieve your:
-   * **Temporary access token** (or create a permanent System User Token under Business Settings > System Users).
-   * **Phone number ID**.
-4. In development mode with Meta test numbers, add recipient phone numbers to the **"To" list** under **Manage phone number list**.
-5. Set `WHATSAPP_TEST_MODE=false` in `backend/.env` to send live WhatsApp messages.
+Restart FastAPI, and proceed to send real certificates!
 
 ---
 
-## 📧 SMTP Email Setup
+## Recommended Excel Format
 
-Certify works with any standard SMTP provider:
-* **Gmail**: Set `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_USE_TLS=true`. Generate a 16-character **App Password** under Google Account > Security > 2-Step Verification > App passwords.
-* **Institutional / College SMTP**: Set `SMTP_HOST` to your university's mail relay host.
-* **Transactional Email**: Compatible with AWS SES (`email-smtp.*.amazonaws.com`), SendGrid (`smtp.sendgrid.net`), or Mailgun.
-* Set `EMAIL_TEST_MODE=false` in `backend/.env` to dispatch live emails.
+| S.No | Name | Reg No | Department | Email |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | Indrish | 727624bea001 | ECE | ind@example.com |
+| 2 | Selva Kumar | 727624bea002 | ECE | selva@example.com |
+| 3 | Naren Selvan T | 727624bea005 | ECE | naren@example.com |
 
 ---
 
-## 🧪 Testing
+## Verification & Testing
 
-Run backend unit and integration tests:
-```powershell
+To run the automated backend test suite:
+
+```bash
 cd backend
-.venv\Scripts\activate
-python tests/test_delivery.py
+.venv\Scripts\python.exe tests\verify_brevo.py
 ```
 
-Test coverage includes:
-* Indian phone normalization (`9092957457`, `09092957457`, `+919092957457` → `919092957457`) & international E.164.
-* Email syntax and domain normalization.
-* Retry classification (429, timeouts, 500s vs permanent invalid contacts).
-* Preflight validation, queue orchestration, fallback delivery, and CSV report streaming.
+Tests cover:
+* Configuration & security isolation
+* Email normalization & regex validation
+* HTTP / Brevo error classification (429, 500, timeouts)
+* Brevo transactional email simulation
+* Bulk delivery queue, progress polling, and CSV reporting
 
 ---
 
-## 🔒 Security Principles
+## License
 
-* **No Credentials in Frontend**: Tokens and passwords exist strictly in `backend/.env`.
-* **Zero Database Exposure**: Certificates and participant rosters are processed in memory and never persisted on server disks.
-* **Official APIs Only**: Strictly uses official Meta Cloud API and standard SMTP protocols. No browser automation or scraping.
+MIT License.

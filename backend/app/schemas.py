@@ -1,5 +1,6 @@
 """
 Certify Backend — Request / Response Schemas (Pydantic)
+Streamlined specifically for Brevo Transactional Email certificate delivery.
 """
 
 import re
@@ -11,64 +12,54 @@ from pydantic import BaseModel, field_validator
 class CertificatePayload(BaseModel):
     """Base64-encoded PDF certificate file."""
     filename: str
-    base64: str  # base64-encoded PDF bytes
+    base64: str
 
     @field_validator("filename")
     @classmethod
     def validate_filename(cls, v: str) -> str:
+        # Sanitize filename to prevent directory traversal or illegal characters
         clean = re.sub(r"[/\\<>:\"|?*]", "_", v.strip())
+        clean = re.sub(r"\.\.+", ".", clean)
         if not clean:
-            raise ValueError("filename cannot be empty")
+            clean = "certificate.pdf"
+        if not clean.lower().endswith(".pdf"):
+            clean = f"{clean}.pdf"
         return clean
 
     @field_validator("base64")
     @classmethod
     def validate_base64_not_empty(cls, v: str) -> str:
         if not v or not v.strip():
-            raise ValueError("base64 certificate data cannot be empty")
-        if len(v) > 14_000_000:
-            raise ValueError("Certificate exceeds maximum allowed size (10MB)")
+            raise ValueError("Certificate base64 data cannot be empty")
         return v
 
 
-# ── Legacy Single WhatsApp Request ───────────────────────────────────────────
-class SendCertificateRequest(BaseModel):
-    """Legacy payload for POST /api/whatsapp/send."""
-    name: str
-    phone: str
-    event_name: str = "your event"
-    certificate: CertificatePayload
+# ── Email Admin & Status Schemas ──────────────────────────────────────────────
+class EmailStatusResponse(BaseModel):
+    provider: str = "brevo"
+    configured: bool
+    test_mode: bool
+    sender_email: str | None = None
+    sender_name: str | None = None
 
-    @field_validator("name")
+
+class EmailTestRequest(BaseModel):
+    recipient_email: str
+    recipient_name: str = "Admin Tester"
+
+    @field_validator("recipient_email")
     @classmethod
-    def validate_name(cls, v: str) -> str:
-        v = v.strip()
-        if not v:
-            raise ValueError("name cannot be empty")
-        return v[:200]
-
-    @field_validator("phone")
-    @classmethod
-    def validate_phone(cls, v: str) -> str:
-        digits = re.sub(r"\D", "", v.strip())
-        if len(digits) < 10 or len(digits) > 15:
-            raise ValueError(f"phone must be 10-15 digits, got {len(digits)}")
-        return digits
-
-    @field_validator("event_name")
-    @classmethod
-    def validate_event_name(cls, v: str) -> str:
-        v = v.strip() or "your event"
-        return v[:500]
+    def validate_recipient_email(cls, v: str) -> str:
+        clean = v.strip()
+        if not clean or "@" not in clean:
+            raise ValueError("A valid email address is required for testing")
+        return clean
 
 
-class SendCertificateResponse(BaseModel):
-    """Response body for POST /api/whatsapp/send."""
+class EmailTestResponse(BaseModel):
     success: bool
-    phone: str
+    message: str
     message_id: str | None = None
-    error: str | None = None
-    code: str | None = None
     test_mode: bool = False
 
 
@@ -76,27 +67,23 @@ class SendCertificateResponse(BaseModel):
 class ParticipantValidateItem(BaseModel):
     index: int
     name: str
-    phone: str | None = None
     email: str | None = None
     certificate_size_bytes: int | None = None
 
 
 class DeliveryValidateRequest(BaseModel):
     participants: list[ParticipantValidateItem]
-    channels: list[str] = ["whatsapp"]  # e.g. ["whatsapp", "email"]
 
 
 class ValidationProblem(BaseModel):
     index: int
     name: str
-    channel: str
+    channel: str = "email"
     reason: str
 
 
 class DeliveryValidateResponse(BaseModel):
     total: int
-    whatsapp_ready: int
-    whatsapp_invalid: int
     email_ready: int
     email_invalid: int
     certificates_ready: int
@@ -110,17 +97,15 @@ class DeliveryParticipant(BaseModel):
     id: str
     sno: str | None = None
     name: str
-    phone: str | None = None
     email: str | None = None
     reg_no: str | None = None
+    department: str | None = None
     event_name: str = "your event"
     certificate: CertificatePayload
 
 
 class DeliveryStartRequest(BaseModel):
     participants: list[DeliveryParticipant]
-    channels: list[str] = ["whatsapp"]
-    enable_fallback: bool = True  # Fallback to email if WhatsApp fails
 
 
 class DeliveryStartResponse(BaseModel):
@@ -132,8 +117,7 @@ class DeliveryStartResponse(BaseModel):
 # ── Status & Results Schemas ──────────────────────────────────────────────────
 class CurrentlySendingInfo(BaseModel):
     participant_name: str
-    channel: str
-    recipient: str
+    email: str
     attempt: int
 
 
@@ -156,18 +140,15 @@ class DeliveryJobResult(BaseModel):
     participant_id: str
     sno: str | None = None
     name: str
-    phone: str | None = None
     email: str | None = None
     reg_no: str | None = None
-    channel: str
+    department: str | None = None
     status: Literal["PENDING", "PROCESSING", "SENT", "FAILED", "RETRYING", "SKIPPED"]
     attempts: int
     error: str | None = None
     error_code: str | None = None
     retryable: bool = False
-    fallback_channel: str | None = None
-    fallback_status: str | None = None
-    updated_at: str
+    timestamp: str
 
 
 class DeliverySummary(BaseModel):
@@ -175,13 +156,6 @@ class DeliverySummary(BaseModel):
     sent: int
     failed: int
     skipped: int
-    fallback_delivered: int
-    whatsapp_sent: int
-    whatsapp_failed: int
-    whatsapp_skipped: int
-    email_sent: int
-    email_failed: int
-    email_skipped: int
 
 
 class DeliveryResultsResponse(BaseModel):
