@@ -23,6 +23,8 @@ from app.schemas import (
     DeliveryStatusResponse,
     DeliveryResultsResponse,
     DeliveryRetryResponse,
+    SendOneRequest,
+    SendOneResponse,
 )
 from app.services.email_service import send_certificate_email
 from app.services.delivery_service import delivery_service
@@ -154,6 +156,54 @@ async def send_test_email(req: EmailTestRequest) -> EmailTestResponse:
         return EmailTestResponse(
             success=False,
             message=res["error"] or "Failed to send test email",
+            message_id=None,
+            test_mode=res["test_mode"],
+        )
+
+
+
+# ── Single Certificate Delivery Endpoint ───────────────────────────────────
+
+@app.post(
+    "/api/delivery/send-one",
+    response_model=SendOneResponse,
+    tags=["Delivery"],
+    summary="Send a single certificate email via Brevo",
+)
+async def send_single_certificate(req: SendOneRequest) -> SendOneResponse:
+    """
+    Sends a single certificate PDF directly to the specified participant.
+    """
+    event = req.event_name or "SPECTRUM"
+    default_subject = req.subject or f"Your Certificate – {event}"
+    default_body = req.body or (
+        f"Dear {req.recipient_name},\n\n"
+        f"Thank you for participating in {event}.\n\n"
+        f"Please find your certificate attached to this email.\n\n"
+        f"We appreciate your participation and congratulate you on your achievement.\n\n"
+        f"Regards,\n{settings.BREVO_SENDER_NAME}"
+    )
+
+    res = await send_certificate_email(
+        recipient_email=req.recipient_email,
+        recipient_name=req.recipient_name,
+        subject=default_subject,
+        body=default_body,
+        pdf_base64=req.certificate.base64,
+        filename=req.certificate.filename,
+    )
+
+    if res["success"]:
+        return SendOneResponse(
+            success=True,
+            message="Certificate sent successfully" if not res["test_mode"] else "Certificate sent (Test Mode simulation)",
+            message_id=res["message_id"],
+            test_mode=res["test_mode"],
+        )
+    else:
+        return SendOneResponse(
+            success=False,
+            message=res["error"] or "Failed to send certificate",
             message_id=None,
             test_mode=res["test_mode"],
         )

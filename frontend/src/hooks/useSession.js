@@ -31,6 +31,7 @@ export function useSession() {
         phoneColumn: state.phoneColumn,
         emailColumn: state.emailColumn,
         preview: state.preview,
+        individualOverrides: state.individualOverrides || {},
       };
       saveSession(session);
       if (state.template.src) await saveTemplateAsset(state.template.src);
@@ -91,6 +92,10 @@ export function useSession() {
       dispatch({ type: A.SET_PHONE_COLUMN, phoneColumn: session.phoneColumn || null });
       dispatch({ type: A.SET_EMAIL_COLUMN, emailColumn: session.emailColumn || null });
 
+      if (session.individualOverrides) {
+        dispatch({ type: A.SET_ALL_OVERRIDES, overrides: session.individualOverrides });
+      }
+
       if (session.preview) {
         dispatch({ type: A.SET_PREVIEW, preview: session.preview });
       }
@@ -113,7 +118,7 @@ export function useSession() {
     }
   }, [dispatch, clearHistory]);
 
-  /** Full wipe — used by Restart */
+  /** Full wipe — used by Restart (wipes only current project data) */
   const wipeSession = useCallback(async () => {
     clearSession();
     await clearTemplateAsset();
@@ -126,7 +131,7 @@ export function useSession() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.page, state.template, state.fields, state.excel,
-      state.mappings, state.phoneColumn, state.emailColumn, state.preview]);
+      state.mappings, state.phoneColumn, state.emailColumn, state.preview, state.individualOverrides]);
 
   return { restore, saveNow, scheduleSave, wipeSession, isRestoring };
 }

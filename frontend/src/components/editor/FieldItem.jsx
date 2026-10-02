@@ -25,31 +25,49 @@ export function FieldItem({
       }}
       onMouseDown={(e) => onMouseDown(e, field.id)}
     >
-      {/* Field text content */}
-      <div
-        className="w-full h-full flex overflow-hidden pointer-events-none select-none px-1"
-        style={{
-          fontFamily: field.fontFamily || 'Inter',
-          fontWeight: field.fontWeight || 'normal',
-          fontStyle: field.fontStyle || 'normal',
-          color: field.color || '#171717',
-          textAlign: field.align || 'center',
-          letterSpacing: `${field.letterSpacing || 0}px`,
-          lineHeight: field.lineHeight || 1.2,
-          fontSize: `${scaledFontSize}px`,
-          alignItems: 'center',
-          justifyContent:
-            field.align === 'left'
-              ? 'flex-start'
-              : field.align === 'right'
-              ? 'flex-end'
-              : 'center',
-        }}
-      >
-        <span className="truncate w-full block">
-          {field.placeholder || field.label}
-        </span>
-      </div>
+      {/* Field content (Signature image or text) */}
+      {field.type === 'signature' ? (
+        field.imageSrc ? (
+          <div className="w-full h-full flex flex-col items-center justify-center p-1 pointer-events-none select-none">
+            <img
+              src={field.imageSrc}
+              alt={field.label}
+              className="w-full h-full object-contain"
+              draggable={false}
+            />
+          </div>
+        ) : (
+          <div className="w-full h-full border border-dashed border-indigo-400 bg-indigo-50/50 rounded flex flex-col items-center justify-center text-xs text-indigo-700 pointer-events-none select-none">
+            <span className="font-medium text-xs">✍ {field.label || 'Signature'}</span>
+            <span className="text-[9px] text-muted">Click to assign image</span>
+          </div>
+        )
+      ) : (
+        <div
+          className="w-full h-full flex overflow-hidden pointer-events-none select-none px-1"
+          style={{
+            fontFamily: field.fontFamily || 'Inter',
+            fontWeight: field.fontWeight || 'normal',
+            fontStyle: field.fontStyle || 'normal',
+            color: field.color || '#171717',
+            textAlign: field.align || 'center',
+            letterSpacing: `${field.letterSpacing || 0}px`,
+            lineHeight: field.lineHeight || 1.2,
+            fontSize: `${scaledFontSize}px`,
+            alignItems: 'center',
+            justifyContent:
+              field.align === 'left'
+                ? 'flex-start'
+                : field.align === 'right'
+                ? 'flex-end'
+                : 'center',
+          }}
+        >
+          <span className="truncate w-full block">
+            {field.placeholder || field.label}
+          </span>
+        </div>
+      )}
 
       {/* Field label badge on top-left */}
       <div

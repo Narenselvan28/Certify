@@ -16,26 +16,30 @@ export const initialState = {
   phoneColumn: null,
   emailColumn: null,
   preview: { mode: 'single', currentIndex: 0 },
+  individualOverrides: {}, // { [rowIndex]: { data: {}, fields: {} } }
   delivery: { results: [], isSending: false, apiBaseUrl: 'http://localhost:8001' },
 };
 
 // ── Action Types ──────────────────────────────────────────────────────────────
 
 export const A = {
-  SET_PAGE:           'SET_PAGE',
-  SET_TEMPLATE:       'SET_TEMPLATE',
-  SET_FIELDS:         'SET_FIELDS',
-  ADD_FIELD:          'ADD_FIELD',
-  UPDATE_FIELD:       'UPDATE_FIELD',
-  DELETE_FIELD:       'DELETE_FIELD',
-  SELECT_FIELD:       'SELECT_FIELD',
-  SET_EXCEL:          'SET_EXCEL',
-  SET_MAPPINGS:       'SET_MAPPINGS',
-  SET_PHONE_COLUMN:   'SET_PHONE_COLUMN',
-  SET_EMAIL_COLUMN:   'SET_EMAIL_COLUMN',
-  SET_PREVIEW:        'SET_PREVIEW',
-  SET_DELIVERY:       'SET_DELIVERY',
-  RESET:              'RESET',
+  SET_PAGE:                  'SET_PAGE',
+  SET_TEMPLATE:              'SET_TEMPLATE',
+  SET_FIELDS:                'SET_FIELDS',
+  ADD_FIELD:                 'ADD_FIELD',
+  UPDATE_FIELD:              'UPDATE_FIELD',
+  DELETE_FIELD:              'DELETE_FIELD',
+  SELECT_FIELD:              'SELECT_FIELD',
+  SET_EXCEL:                 'SET_EXCEL',
+  SET_MAPPINGS:              'SET_MAPPINGS',
+  SET_PHONE_COLUMN:          'SET_PHONE_COLUMN',
+  SET_EMAIL_COLUMN:          'SET_EMAIL_COLUMN',
+  SET_PREVIEW:               'SET_PREVIEW',
+  SET_INDIVIDUAL_OVERRIDE:   'SET_INDIVIDUAL_OVERRIDE',
+  RESET_INDIVIDUAL_OVERRIDE: 'RESET_INDIVIDUAL_OVERRIDE',
+  SET_ALL_OVERRIDES:         'SET_ALL_OVERRIDES',
+  SET_DELIVERY:              'SET_DELIVERY',
+  RESET:                     'RESET',
 };
 
 // ── Reducer ───────────────────────────────────────────────────────────────────
@@ -96,6 +100,38 @@ function reducer(state, action) {
 
     case A.SET_PREVIEW:
       return { ...state, preview: { ...state.preview, ...action.preview } };
+
+    case A.SET_INDIVIDUAL_OVERRIDE: {
+      const prev = state.individualOverrides[action.index] || {};
+      const nextOverride = {
+        ...prev,
+        ...action.override,
+        data: {
+          ...(prev.data || {}),
+          ...(action.override?.data || {}),
+        },
+        fields: {
+          ...(prev.fields || {}),
+          ...(action.override?.fields || {}),
+        },
+      };
+      return {
+        ...state,
+        individualOverrides: {
+          ...state.individualOverrides,
+          [action.index]: nextOverride,
+        },
+      };
+    }
+
+    case A.RESET_INDIVIDUAL_OVERRIDE: {
+      const nextOverrides = { ...state.individualOverrides };
+      delete nextOverrides[action.index];
+      return { ...state, individualOverrides: nextOverrides };
+    }
+
+    case A.SET_ALL_OVERRIDES:
+      return { ...state, individualOverrides: action.overrides || {} };
 
     case A.SET_DELIVERY:
       return { ...state, delivery: { ...state.delivery, ...action.delivery } };

@@ -16,6 +16,12 @@ async function getDB() {
       if (!db.objectStoreNames.contains('assets')) {
         db.createObjectStore('assets');
       }
+      if (!db.objectStoreNames.contains('signatures')) {
+        db.createObjectStore('signatures', { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains('templates')) {
+        db.createObjectStore('templates', { keyPath: 'id' });
+      }
     };
     req.onsuccess = (e) => { _db = e.target.result; resolve(_db); };
     req.onerror = (e) => reject(e.target.error);
@@ -23,48 +29,64 @@ async function getDB() {
 }
 
 export const idb = {
-  async set(key, value) {
+  async set(storeName, key, value) {
     try {
       const db = await getDB();
       return new Promise((resolve, reject) => {
-        const tx = db.transaction('assets', 'readwrite');
-        tx.objectStore('assets').put(value, key);
+        const tx = db.transaction(storeName, 'readwrite');
+        if (key !== null && key !== undefined) {
+          tx.objectStore(storeName).put(value, key);
+        } else {
+          tx.objectStore(storeName).put(value);
+        }
         tx.oncomplete = () => resolve(true);
         tx.onerror = (e) => reject(e.target.error);
       });
     } catch { return false; }
   },
 
-  async get(key) {
+  async get(storeName, key) {
     try {
       const db = await getDB();
       return new Promise((resolve, reject) => {
-        const tx = db.transaction('assets', 'readonly');
-        const req = tx.objectStore('assets').get(key);
+        const tx = db.transaction(storeName, 'readonly');
+        const req = tx.objectStore(storeName).get(key);
         req.onsuccess = () => resolve(req.result);
         req.onerror = (e) => reject(e.target.error);
       });
     } catch { return null; }
   },
 
-  async delete(key) {
+  async getAll(storeName) {
     try {
       const db = await getDB();
       return new Promise((resolve, reject) => {
-        const tx = db.transaction('assets', 'readwrite');
-        tx.objectStore('assets').delete(key);
+        const tx = db.transaction(storeName, 'readonly');
+        const req = tx.objectStore(storeName).getAll();
+        req.onsuccess = () => resolve(req.result || []);
+        req.onerror = (e) => reject(e.target.error);
+      });
+    } catch { return []; }
+  },
+
+  async delete(storeName, key) {
+    try {
+      const db = await getDB();
+      return new Promise((resolve, reject) => {
+        const tx = db.transaction(storeName, 'readwrite');
+        tx.objectStore(storeName).delete(key);
         tx.oncomplete = () => resolve(true);
         tx.onerror = (e) => reject(e.target.error);
       });
     } catch { return false; }
   },
 
-  async clear() {
+  async clear(storeName) {
     try {
       const db = await getDB();
       return new Promise((resolve, reject) => {
-        const tx = db.transaction('assets', 'readwrite');
-        tx.objectStore('assets').clear();
+        const tx = db.transaction(storeName, 'readwrite');
+        tx.objectStore(storeName).clear();
         tx.oncomplete = () => resolve(true);
         tx.onerror = (e) => reject(e.target.error);
       });
@@ -76,7 +98,11 @@ export const idb = {
 
 export function loadSession() {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    let raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      // Backward compatibility fallback
+      raw = localStorage.getItem('certify_session');
+    }
     return raw ? JSON.parse(raw) : null;
   } catch { return null; }
 }
@@ -91,21 +117,62 @@ export function saveSession(data) {
 export function clearSession() {
   try {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem('certify_session');
   } catch {}
 }
 
 // ── Template image via IndexedDB ──────────────────────────────────────────────
 
 export async function saveTemplateAsset(src) {
-  return idb.set(ASSET_KEY, src);
+  return idb.set('assets', ASSET_KEY, src);
 }
 
 export async function loadTemplateAsset() {
-  return idb.get(ASSET_KEY);
+  return idb.get('assets', ASSET_KEY);
 }
 
 export async function clearTemplateAsset() {
-  return idb.clear();
+  return idb.clear('assets');
+}
+
+// ── Digital Signature Library via IndexedDB ───────────────────────────────────
+
+export async function saveSignature(signature) {
+  if (!signature.id) {
+    signature.id = `sig_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  }
+  if (!signature.createdAt) {
+    signature.createdAt = new Date().toISOString();
+  }
+  await idb.set('signatures', null, signature);
+  return signature;
+}
+
+export async function loadSignatures() {
+  return idb.getAll('signatures');
+}
+
+export async function deleteSignature(id) {
+  return idb.delete('signatures', id);
+}
+
+// ── Saved Template Library via IndexedDB ──────────────────────────────────────
+
+export async function saveSavedTemplate(templateData) {
+  if (!templateData.id) {
+    templateData.id = `tpl_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+  }
+  templateData.updatedAt = new Date().toISOString();
+  await idb.set('templates', null, templateData);
+  return templateData;
+}
+
+export async function loadSavedTemplates() {
+  return idb.getAll('templates');
+}
+
+export async function deleteSavedTemplate(id) {
+  return idb.delete('templates', id);
 }
 
 // ── Load an Image from a data-URL src ────────────────────────────────────────

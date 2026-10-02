@@ -1,19 +1,14 @@
 import { useRef, useState, useEffect } from 'react';
 import { useAppContext, A } from '../context/AppContext.jsx';
 import { useEditor } from '../hooks/useEditor.js';
-import { parseExcelFile } from '../services/excel.js';
-import { autoMapFields, detectEmailColumn } from '../utils/mapping.js';
-import { clearSession, clearTemplateAsset } from '../services/storage.js';
+import { createField } from '../constants/fields.js';
 
 import { Toolbar } from '../components/editor/Toolbar.jsx';
 import { Stage } from '../components/editor/Stage.jsx';
 import { PropertiesPanel } from '../components/editor/PropertiesPanel.jsx';
 import { FieldBar } from '../components/editor/FieldBar.jsx';
 
-import { GenerateModal } from '../components/modals/GenerateModal.jsx';
-import { MappingModal } from '../components/modals/MappingModal.jsx';
-import { RestartModal } from '../components/modals/RestartModal.jsx';
-import { ExcelDataModal } from '../components/modals/ExcelDataModal.jsx';
+import { SignatureManagerModal } from '../components/signatures/SignatureManagerModal.jsx';
 
 export function EditorPage({ onShowToast }) {
   const {
@@ -23,7 +18,6 @@ export function EditorPage({ onShowToast }) {
     captureSnapshot,
     undo,
     redo,
-    clearHistory,
     canUndo,
     canRedo,
   } = useAppContext();
@@ -31,11 +25,9 @@ export function EditorPage({ onShowToast }) {
   const stageRef = useRef(null);
   const [zoom, setZoom] = useState(1);
 
-  // Modals state
-  const [isGenerateOpen, setIsGenerateOpen] = useState(false);
-  const [isMappingOpen, setIsMappingOpen] = useState(false);
-  const [isRestartOpen, setIsRestartOpen] = useState(false);
-  const [isDataViewOpen, setIsDataViewOpen] = useState(false);
+  // Signature modal state
+  const [isSigModalOpen, setIsSigModalOpen] = useState(false);
+  const [sigTargetFieldId, setSigTargetFieldId] = useState(null);
 
   const {
     onFieldBodyMouseDown,
@@ -44,7 +36,6 @@ export function EditorPage({ onShowToast }) {
     onMouseMove,
     onMouseUp,
     onKeyDown,
-    selectField,
     deselectAll,
   } = useEditor(stageRef);
 
@@ -101,64 +92,57 @@ export function EditorPage({ onShowToast }) {
   };
 
   const handleAddField = (type) => {
+    if (type === 'signature') {
+      setSigTargetFieldId(null);
+      setIsSigModalOpen(true);
+      return;
+    }
     pushHistory(captureSnapshot(state));
     dispatch({ type: A.ADD_FIELD, fieldType: type });
   };
 
-  // Excel / CSV file upload handler
-  const handleUploadExcel = async (file) => {
-    try {
-      const { fileName, headers, rows, rowCount } = await parseExcelFile(file);
-      dispatch({ type: A.SET_EXCEL, excel: { fileName, headers, rows } });
-
-      // Automatically map columns
-      const { mappings, confident } = autoMapFields(state.fields, headers);
-      dispatch({ type: A.SET_MAPPINGS, mappings });
-
-      // Automatically detect recipient email column
-      const detectedEmail = detectEmailColumn(headers);
-      if (detectedEmail) {
-        dispatch({ type: A.SET_EMAIL_COLUMN, emailColumn: detectedEmail });
-      }
-
-      onShowToast?.(`Loaded ${rowCount} rows from ${fileName}`, 'success');
-
-      // If mapping was not 100% confident or email was not detected, suggest opening mapping modal
-      if ((!confident || !detectedEmail) && state.fields.length > 0) {
-        setIsMappingOpen(true);
-      }
-    } catch (err) {
-      console.error('Excel upload error:', err);
-      onShowToast?.(err.message, 'error');
+  const handleSignatureSelect = (sig) => {
+    if (sigTargetFieldId) {
+      // Update selected existing signature field
+      pushHistory(captureSnapshot(state));
+      dispatch({
+        type: A.UPDATE_FIELD,
+        id: sigTargetFieldId,
+        changes: {
+          imageSrc: sig.dataUrl,
+          signatureId: sig.id,
+          label: sig.name,
+          designation: sig.designation,
+        },
+      });
+      onShowToast?.(`Updated signature: ${sig.name}`, 'success');
+    } else {
+      // Create new signature field
+      pushHistory(captureSnapshot(state));
+      const newField = createField('signature', state.fields.length, state.fieldCounter, {
+        label: sig.name,
+        signatureId: sig.id,
+        imageSrc: sig.dataUrl,
+        designation: sig.designation,
+      });
+      dispatch({
+        type: A.SET_FIELDS,
+        fields: [...state.fields, newField],
+        counter: state.fieldCounter + 1,
+      });
+      dispatch({ type: A.SELECT_FIELD, id: newField.id });
+      onShowToast?.(`Added signature: ${sig.name}`, 'success');
     }
+    setSigTargetFieldId(null);
   };
 
-  // Confirm mapping modal
-  const handleConfirmMapping = (newMappings, _newPhone, newEmail) => {
-    dispatch({ type: A.SET_MAPPINGS, mappings: newMappings });
-    dispatch({ type: A.SET_EMAIL_COLUMN, emailColumn: newEmail });
-    setIsMappingOpen(false);
-    onShowToast?.('Column mappings updated', 'success');
-  };
-
-  // Navigation & Reset
+  // Navigation
   const handleBackToUpload = () => {
     dispatch({ type: A.SET_PAGE, page: 'upload' });
   };
 
-  const handleConfirmRestart = async () => {
-    clearSession();
-    await clearTemplateAsset();
-    clearHistory();
-    dispatch({ type: A.RESET });
-    setIsRestartOpen(false);
-    onShowToast?.('Project reset', 'info');
-  };
-
-  const handleConfirmGenerate = () => {
-    setIsGenerateOpen(false);
-    dispatch({ type: A.SET_PREVIEW, preview: { mode: 'single', currentIndex: 0 } });
-    dispatch({ type: A.SET_PAGE, page: 'preview' });
+  const handleContinueToParticipants = () => {
+    dispatch({ type: A.SET_PAGE, page: 'participants' });
   };
 
   return (
@@ -170,11 +154,11 @@ export function EditorPage({ onShowToast }) {
         onUndo={() => undo(state)}
         onRedo={() => redo(state)}
         onBack={handleBackToUpload}
-        onRestart={() => setIsRestartOpen(true)}
-        onOpenMapping={() => setIsMappingOpen(true)}
-        onOpenDataView={() => setIsDataViewOpen(true)}
-        onOpenGenerate={() => setIsGenerateOpen(true)}
-        onUploadExcel={handleUploadExcel}
+        onOpenSignatures={() => {
+          setSigTargetFieldId(selectedField?.type === 'signature' ? selectedField.id : null);
+          setIsSigModalOpen(true);
+        }}
+        onContinueToParticipants={handleContinueToParticipants}
       />
 
       {/* Selected Field Properties Panel */}
@@ -183,6 +167,10 @@ export function EditorPage({ onShowToast }) {
           field={selectedField}
           onUpdateField={handleUpdateField}
           onDeleteField={handleDeleteField}
+          onChangeSignature={() => {
+            setSigTargetFieldId(selectedField.id);
+            setIsSigModalOpen(true);
+          }}
         />
       )}
 
@@ -206,37 +194,14 @@ export function EditorPage({ onShowToast }) {
         onZoomChange={setZoom}
       />
 
-      {/* Dialogs */}
-      <GenerateModal
-        isOpen={isGenerateOpen}
-        rowCount={state.excel?.rows?.length || 0}
-        onCancel={() => setIsGenerateOpen(false)}
-        onConfirm={handleConfirmGenerate}
-      />
-
-      <MappingModal
-        isOpen={isMappingOpen}
-        fields={state.fields}
-        headers={state.excel?.headers || []}
-        mappings={state.mappings || {}}
-        emailColumn={state.emailColumn}
-        onConfirm={handleConfirmMapping}
-        onCancel={() => setIsMappingOpen(false)}
-      />
-
-      <RestartModal
-        isOpen={isRestartOpen}
-        onCancel={() => setIsRestartOpen(false)}
-        onConfirm={handleConfirmRestart}
-      />
-
-      <ExcelDataModal
-        isOpen={isDataViewOpen}
-        excel={state.excel}
-        fields={state.fields}
-        mappings={state.mappings}
-        emailColumn={state.emailColumn}
-        onClose={() => setIsDataViewOpen(false)}
+      {/* Reusable Signature Manager Modal */}
+      <SignatureManagerModal
+        isOpen={isSigModalOpen}
+        onClose={() => {
+          setIsSigModalOpen(false);
+          setSigTargetFieldId(null);
+        }}
+        onSelectSignature={handleSignatureSelect}
       />
     </div>
   );

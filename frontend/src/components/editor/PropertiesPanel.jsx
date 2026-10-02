@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { FONTS } from '../../constants/fonts.js';
 
-export function PropertiesPanel({ field, onUpdateField, onDeleteField }) {
+export function PropertiesPanel({ field, onUpdateField, onDeleteField, onChangeSignature }) {
   const [fontSearch, setFontSearch] = useState('');
   const [isFontPickerOpen, setIsFontPickerOpen] = useState(false);
   const fontDropdownRef = useRef(null);
@@ -20,6 +20,92 @@ export function PropertiesPanel({ field, onUpdateField, onDeleteField }) {
   }, [isFontPickerOpen]);
 
   if (!field) return null;
+
+  // ── Dedicated Signature Controls ──────────────────────────────────────────
+  if (field.type === 'signature') {
+    return (
+      <div className="bg-surface border-b border-border px-4 py-2 flex flex-wrap items-center gap-2 text-xs shadow-sm z-10 shrink-0">
+        <div className="flex items-center space-x-2 mr-1 pr-2 border-r border-border">
+          <span className="font-semibold text-primary">{field.label || 'Digital Signature'}</span>
+          <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 text-[10px] font-medium border border-indigo-200">
+            Signature
+          </span>
+        </div>
+
+        {field.imageSrc ? (
+          <div className="h-7 px-2 py-0.5 rounded bg-bg border border-border flex items-center space-x-2">
+            <img src={field.imageSrc} alt="Signature" className="h-5 max-w-[60px] object-contain" />
+            <button
+              type="button"
+              onClick={onChangeSignature}
+              className="text-[11px] text-accent hover:underline font-medium"
+            >
+              Change
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={onChangeSignature}
+            className="px-2.5 py-1 rounded bg-accent text-white hover:bg-accent-hover text-xs font-medium transition-colors"
+          >
+            Assign Signature Image
+          </button>
+        )}
+
+        <div className="flex items-center space-x-1.5 border border-border rounded px-2 py-1 bg-surface">
+          <span className="text-muted text-[11px]">Title:</span>
+          <input
+            type="text"
+            placeholder="e.g. Principal"
+            value={field.designation || ''}
+            onChange={(e) => onUpdateField({ designation: e.target.value })}
+            className="w-24 text-xs border-0 focus:outline-none text-primary bg-transparent"
+          />
+        </div>
+
+        <button
+          type="button"
+          onClick={() => onUpdateField({ x: Math.max(0, (1 - field.width) / 2) })}
+          className="px-2 py-1 rounded border border-border hover:bg-bg text-muted hover:text-primary transition-colors text-[11px]"
+          title="Center signature horizontally"
+        >
+          Center Horiz
+        </button>
+
+        <div className="flex items-center space-x-1 text-muted border border-border rounded px-1.5 py-1 bg-surface">
+          <span className="text-[10px]">∠</span>
+          <input
+            type="number"
+            min="-180"
+            max="180"
+            value={field.rotation || 0}
+            onChange={(e) => {
+              const val = parseFloat(e.target.value);
+              if (!isNaN(val)) onUpdateField({ rotation: val });
+            }}
+            className="w-8 text-center text-xs border-0 focus:outline-none text-primary bg-transparent"
+            title="Rotation in degrees"
+          />
+          <span className="text-[10px]">°</span>
+        </div>
+
+        <div className="h-4 border-r border-border mx-1"></div>
+
+        <button
+          type="button"
+          onClick={onDeleteField}
+          className="flex items-center space-x-1 px-2.5 py-1 text-error hover:bg-red-50 rounded border border-red-200 transition-colors"
+          title="Delete Signature Field"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+          <span>Delete</span>
+        </button>
+      </div>
+    );
+  }
 
   const filteredFonts = FONTS.filter((f) =>
     f.name.toLowerCase().includes(fontSearch.toLowerCase()) ||

@@ -47,6 +47,7 @@ export function DeliveryCenter({ onShowToast }) {
     fields,
     mappings,
     emailColumn,
+    overrides: state.individualOverrides || {},
     apiBaseUrl,
     onShowToast,
   });
@@ -67,7 +68,7 @@ export function DeliveryCenter({ onShowToast }) {
     try {
       await exportZip(rows, templateImg, fields, mappings, (current, total, statusText) => {
         setZipProgress({ isOpen: true, current, total, statusText });
-      });
+      }, state.individualOverrides || {});
       onShowToast?.('All certificates downloaded as ZIP', 'success');
     } catch (err) {
       onShowToast?.(`ZIP export failed: ${err.message}`, 'error');
@@ -81,17 +82,17 @@ export function DeliveryCenter({ onShowToast }) {
       {/* Top Header */}
       <header className="h-[52px] border-b border-border bg-surface px-5 flex items-center justify-between shrink-0 z-10">
         <div className="flex items-center space-x-2.5">
-          <span className="font-semibold text-sm tracking-tight text-primary">Certify</span>
+          <span className="font-bold text-sm tracking-tight text-primary">SPECTRA</span>
           <button
             type="button"
             onClick={handleBackToPreview}
-            className="flex items-center space-x-1 text-xs text-muted hover:text-primary px-2 py-1 rounded-[4px] hover:bg-bg transition-colors"
+            className="flex items-center space-x-1 text-xs text-muted hover:text-primary px-2.5 py-1 rounded-lg border border-border/80 hover:bg-bg transition-colors"
           >
             <span>←</span>
-            <span>Back to Preview</span>
+            <span>Back to Review</span>
           </button>
           <div className="h-3.5 w-px bg-border"></div>
-          <span className="text-sm font-semibold text-primary">Email Delivery Center</span>
+          <span className="text-sm font-semibold text-primary">Email Delivery</span>
         </div>
 
         {/* Stepper Pills */}

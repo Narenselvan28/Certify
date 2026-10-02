@@ -50,12 +50,15 @@ export const FIELD_TEMPLATES = {
     fontSizePx: 18, fontWeight: 'normal', fontFamily: 'Inter',
     align: 'center', autoFit: false,
   },
-  phone: {
-    type: 'phone',
-    label: 'Phone Number',
-    placeholder: '{{PHONE}}',
-    width: 0.30, height: 0.05,
-    fontSizePx: 20, fontWeight: 'normal', fontFamily: 'Inter',
+  signature: {
+    type: 'signature',
+    label: 'Digital Signature',
+    placeholder: '[ Signature ]',
+    width: 0.18, height: 0.08,
+    signatureId: null,
+    imageSrc: null,
+    designation: '',
+    fontSizePx: 14, fontWeight: 'normal', fontFamily: 'Inter',
     align: 'center', autoFit: false,
   },
   custom: {
@@ -76,12 +79,12 @@ export const FIELD_TYPES = [
   { type: 'sno',        label: '+ S.No' },
   { type: 'event_name', label: '+ Event Name' },
   { type: 'date',       label: '+ Date' },
-  { type: 'phone',      label: '+ Phone' },
+  { type: 'signature',  label: '+ Signature', icon: 'signature' },
   { type: 'custom',     label: '+ Custom', dashed: true },
 ];
 
 /** Create a new field object from a type string */
-export function createField(type, existingCount, counter) {
+export function createField(type, existingCount, counter, extra = {}) {
   const tmpl = FIELD_TEMPLATES[type] || FIELD_TEMPLATES.custom;
   const id = `field_${counter}`;
   const initialX = Math.max(0.1, 0.5 - tmpl.width / 2);
@@ -90,12 +93,12 @@ export function createField(type, existingCount, counter) {
   return {
     id,
     type,
-    label: type === 'custom' ? `Custom ${counter}` : tmpl.label,
+    label: type === 'custom' ? `Custom ${counter}` : (extra.label || tmpl.label),
     placeholder: tmpl.placeholder,
     x: Number(initialX.toFixed(4)),
     y: Number(initialY.toFixed(4)),
-    width: tmpl.width,
-    height: tmpl.height,
+    width: extra.width || tmpl.width,
+    height: extra.height || tmpl.height,
     rotation: 0,
     fontSizePx: tmpl.fontSizePx,
     fontWeight: tmpl.fontWeight,
@@ -106,5 +109,8 @@ export function createField(type, existingCount, counter) {
     letterSpacing: 0,
     lineHeight: 1.2,
     autoFit: tmpl.autoFit,
+    signatureId: extra.signatureId || tmpl.signatureId || null,
+    imageSrc: extra.imageSrc || tmpl.imageSrc || null,
+    designation: extra.designation || tmpl.designation || '',
   };
 }

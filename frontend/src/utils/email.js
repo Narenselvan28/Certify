@@ -28,3 +28,7 @@ export function normalizeEmail(raw) {
   if (parts.length !== 2) return null;
   return `${parts[0]}@${parts[1].toLowerCase().trim()}`;
 }
+
+export function isValidEmail(raw) {
+  return normalizeEmail(raw) !== null;
+}

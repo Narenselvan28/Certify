@@ -89,6 +89,39 @@ export async function sendTestEmail(apiBaseUrl, recipientEmail, recipientName = 
   return await resp.json();
 }
 
+/** Send a single certificate directly via Brevo */
+export async function sendSingleCertificate(apiBaseUrl, {
+  recipientEmail,
+  recipientName,
+  subject,
+  body,
+  eventName = 'SPECTRUM',
+  pdfBase64,
+  filename,
+}) {
+  const url = await getActiveBackendUrl(apiBaseUrl);
+  const resp = await fetch(`${url}/api/delivery/send-one`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      recipient_email: recipientEmail,
+      recipient_name: recipientName,
+      subject: subject || null,
+      body: body || null,
+      event_name: eventName,
+      certificate: {
+        filename,
+        base64: pdfBase64,
+      },
+    }),
+  });
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => resp.statusText);
+    throw new Error(`Failed to send certificate: HTTP ${resp.status} - ${txt}`);
+  }
+  return await resp.json();
+}
+
 /** Preflight validation request */
 export async function validateDelivery(apiBaseUrl, participants) {
   const url = await getActiveBackendUrl(apiBaseUrl);

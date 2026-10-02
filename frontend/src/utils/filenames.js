@@ -9,7 +9,12 @@ export function sanitizeFilename(name) {
     .replace(/_+/g, '_');
 }
 
-/** Build a certificate PDF filename */
-export function buildCertFilename(index, participantName) {
-  return `Certificate_${String(index + 1).padStart(3, '0')}_${sanitizeFilename(participantName)}.pdf`;
+/** Build a certificate PDF filename according to SPECTRA format */
+export function buildCertFilename(index, participantName, regNo = null) {
+  const cleanName = sanitizeFilename(participantName);
+  if (regNo && String(regNo).trim()) {
+    const cleanReg = sanitizeFilename(String(regNo));
+    return `${cleanName}_${cleanReg}_Certificate.pdf`;
+  }
+  return `${cleanName}_Certificate.pdf`;
 }

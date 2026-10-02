@@ -63,6 +63,31 @@ class EmailTestResponse(BaseModel):
     test_mode: bool = False
 
 
+# ── Individual Certificate Delivery Schema ────────────────────────────────────
+class SendOneRequest(BaseModel):
+    recipient_email: str
+    recipient_name: str
+    subject: str | None = None
+    body: str | None = None
+    event_name: str | None = "SPECTRUM"
+    certificate: CertificatePayload
+
+    @field_validator("recipient_email")
+    @classmethod
+    def validate_recipient_email(cls, v: str) -> str:
+        clean = v.strip()
+        if not clean or "@" not in clean:
+            raise ValueError("A valid email address is required")
+        return clean
+
+
+class SendOneResponse(BaseModel):
+    success: bool
+    message: str
+    message_id: str | None = None
+    test_mode: bool = False
+
+
 # ── Preflight Validation Schemas ──────────────────────────────────────────────
 class ParticipantValidateItem(BaseModel):
     index: int

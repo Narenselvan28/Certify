@@ -6,16 +6,17 @@ import { generateSinglePDF } from './pdfExporter.js';
 /**
  * Generate individual PDFs for all participants and download as a ZIP archive.
  */
-export async function exportZip(rows, templateImg, fields, mappings, onProgress) {
+export async function exportZip(rows, templateImg, fields, mappings, onProgress, overrides = {}) {
   const zip = new JSZip();
   const folder = zip.folder('Certificates');
   const total = rows.length;
 
   for (let i = 0; i < total; i++) {
     const row = rows[i];
-    const { filename, blob } = await generateSinglePDF(row, i, templateImg, fields, mappings);
+    const override = overrides[i] || null;
+    const { filename, blob } = await generateSinglePDF(row, i, templateImg, fields, mappings, override);
 
-    const name = filename.replace(/^Certificate_\d+_/, '').replace(/.pdf$/, '');
+    const name = filename.replace(/\.pdf$/i, '');
     onProgress?.(i + 1, total, `Generating ${name}...`);
 
     folder.file(filename, blob);

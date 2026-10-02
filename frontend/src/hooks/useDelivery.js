@@ -23,7 +23,8 @@ export function useDelivery({
   fields = [],
   mappings = {},
   emailColumn,
-  apiBaseUrl = 'http://localhost:8001',
+  overrides = {},
+  apiBaseUrl = 'http://localhost:8000',
   onShowToast,
 }) {
   const [step, setStep] = useState('ready'); // 'ready' | 'preflight' | 'progress' | 'results'
@@ -31,9 +32,9 @@ export function useDelivery({
   // Brevo configuration status
   const [brevoStatus, setBrevoStatus] = useState({
     configured: false,
-    test_mode: true,
+    test_mode: false,
     sender_email: '',
-    sender_name: 'Certify',
+    sender_name: 'SPECTRUM',
     loading: true,
   });
 
@@ -143,7 +144,8 @@ export function useDelivery({
       const participants = [];
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
-        const { blob, filename } = await generateSinglePDF(row, i, templateImg, fields, mappings);
+        const override = overrides[i] || null;
+        const { blob, filename } = await generateSinglePDF(row, i, templateImg, fields, mappings, override);
 
         // Convert blob to base64
         const buf = await blob.arrayBuffer();
@@ -152,17 +154,21 @@ export function useDelivery({
         for (let b = 0; b < bytes.length; b++) bin += String.fromCharCode(bytes[b]);
         const b64 = btoa(bin);
 
-        const regNo = row['reg_no'] || row['Reg No'] || row['Roll No'] || row['regno'] || '';
-        const dept = row['department'] || row['Department'] || row['Dept'] || '';
+        const effective = override?.data ? { ...row, ...override.data } : row;
+        const regNo = override?.data?.reg_no || row['reg_no'] || row['Reg No'] || row['Roll No'] || row['regno'] || '';
+        const dept = override?.data?.department || row['department'] || row['Department'] || row['Dept'] || '';
+        const name = override?.data?.name || getParticipantName(effective, fields, mappings);
+        const email = getParticipantEmail(effective, fields, mappings, emailColumn);
+        const eventName = override?.data?.event_name || getEventName(effective, fields, mappings) || 'SPECTRUM';
 
         participants.push({
           id: `p_${i + 1}`,
           sno: String(i + 1),
-          name: getParticipantName(row, fields, mappings),
-          email: getParticipantEmail(row, fields, mappings, emailColumn),
+          name,
+          email,
           reg_no: regNo,
           department: dept,
-          event_name: getEventName(row, fields, mappings),
+          event_name: eventName,
           certificate: { filename, base64: b64 },
         });
       }

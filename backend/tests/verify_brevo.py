@@ -49,19 +49,27 @@ async def test_all():
     assert is_retryable_error("CONFIG_MISSING") is False
     print("Retry classification: OK")
 
-    print("\n=== Test 4: Brevo Email Simulation (Test Mode) ===")
+    import base64
+    valid_pdf_b64 = base64.b64encode(
+        b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+        b"2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj\n"
+        b"3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<<>>>>endobj\n"
+        b"xref\n0 4\n0000000000 65535 f\n0000000010 00000 n\n0000000053 00000 n\n0000000102 00000 n\n"
+        b"trailer<</Size 4/Root 1 0 R>>\nstartxref\n178\n%%EOF\n"
+    ).decode("ascii")
+
+    print("\n=== Test 4: Brevo Email Delivery ===")
     res = await send_certificate_email(
         recipient_email="student@example.com",
         recipient_name="Naren Selvan",
         subject="Your Certificate",
         body="Congratulations!",
-        pdf_base64="JVBERi0xLjQKJcTl8uXr...",
+        pdf_base64=valid_pdf_b64,
         filename="Naren_Certificate.pdf",
     )
     assert res["success"] is True
-    assert res["test_mode"] is True
-    assert "simulated" in res["message_id"]
-    print(f"Test mode send successful: {res['message_id']}")
+    assert res["message_id"] is not None
+    print(f"Email send successful: {res['message_id']} (test_mode={res['test_mode']})")
 
     print("\n=== Test 5: Delivery Preflight Validation ===")
     req = DeliveryValidateRequest(
@@ -89,7 +97,7 @@ async def test_all():
             email="ind@example.com",
             reg_no="727624bea001",
             event_name="Robotics Workshop",
-            certificate=CertificatePayload(filename="Indrish.pdf", base64="JVBERi0xLjQK..."),
+            certificate=CertificatePayload(filename="Indrish.pdf", base64=valid_pdf_b64),
         ),
         DeliveryParticipant(
             id="p_2",
@@ -98,7 +106,7 @@ async def test_all():
             email="selva@example.com",
             reg_no="727624bea002",
             event_name="Robotics Workshop",
-            certificate=CertificatePayload(filename="Selva.pdf", base64="JVBERi0xLjQK..."),
+            certificate=CertificatePayload(filename="Selva.pdf", base64=valid_pdf_b64),
         ),
         DeliveryParticipant(
             id="p_3",
@@ -107,17 +115,20 @@ async def test_all():
             email="not-an-email",
             reg_no="727624bea003",
             event_name="Robotics Workshop",
-            certificate=CertificatePayload(filename="Invalid.pdf", base64="JVBERi0xLjQK..."),
+            certificate=CertificatePayload(filename="Invalid.pdf", base64=valid_pdf_b64),
         ),
     ]
 
     delivery_id = delivery_service.start_delivery(participants)
     print(f"Started delivery session: {delivery_id}")
 
-    # Wait for background queue to process (in test mode with small delay)
-    await asyncio.sleep(1.0)
+    # Wait for background queue to complete
+    for _ in range(20):
+        st = delivery_service.get_status(delivery_id)
+        if st.is_complete:
+            break
+        await asyncio.sleep(0.5)
 
-    st = delivery_service.get_status(delivery_id)
     print(f"Session Status: sent={st.sent}, skipped={st.skipped}, failed={st.failed}, complete={st.is_complete}")
     assert st.sent == 2
     assert st.skipped == 1

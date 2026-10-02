@@ -8,59 +8,36 @@ export function Toolbar({
   onRedo,
   onBack,
   onRestart,
-  onOpenMapping,
-  onOpenDataView,
-  onOpenGenerate,
-  onUploadExcel,
+  onOpenSignatures,
+  onContinueToParticipants,
 }) {
-  const { state, dispatch } = useAppContext();
-  const fileInputRef = useRef(null);
-
+  const { state } = useAppContext();
   const template = state.template;
-  const excel = state.excel;
-  const hasRows = (excel?.rows?.length ?? 0) > 0;
-
-  const handleExcelFileChange = (e) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      onUploadExcel(file);
-      e.target.value = '';
-    }
-  };
-
-  const handleClearExcel = (e) => {
-    e.stopPropagation();
-    dispatch({ type: A.SET_EXCEL, excel: { fileName: null, headers: [], rows: [] } });
-    dispatch({ type: A.SET_MAPPINGS, mappings: {} });
-    dispatch({ type: A.SET_PHONE_COLUMN, phoneColumn: null });
-  };
+  const participantCount = state.excel?.rows?.length || 0;
 
   return (
     <header className="h-[52px] border-b border-border bg-surface px-5 flex items-center justify-between z-20 shrink-0">
       {/* Left: Brand, Back, Undo/Redo, Dimension Badge */}
       <div className="flex items-center space-x-2.5">
-        <span className="font-semibold text-sm tracking-tight text-primary">Certify</span>
-
-        {/* Back button */}
         <button
           type="button"
           onClick={onBack}
-          className="flex items-center space-x-1 text-xs text-muted hover:text-primary px-2 py-1 rounded-[4px] hover:bg-bg transition-colors"
+          className="flex items-center space-x-1 text-xs text-muted hover:text-primary px-2.5 py-1 rounded-lg border border-border/80 hover:bg-bg transition-colors"
           title="Back to template upload"
         >
           <span>←</span>
-          <span>Back</span>
+          <span>Template</span>
         </button>
 
-        <div className="h-3.5 w-px bg-border"></div>
+        <div className="h-3.5 w-px bg-border" />
 
-        {/* Undo / Redo Toolbar */}
+        {/* Undo / Redo */}
         <div className="flex items-center space-x-0.5">
           <button
             type="button"
             onClick={onUndo}
             disabled={!canUndo}
-            className="p-1.5 text-xs text-primary hover:bg-bg rounded-[4px] transition-colors disabled:opacity-35 disabled:cursor-not-allowed"
+            className="p-1.5 text-xs text-primary hover:bg-bg rounded-md transition-colors disabled:opacity-35 disabled:cursor-not-allowed"
             title="Undo (Ctrl+Z)"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -71,7 +48,7 @@ export function Toolbar({
             type="button"
             onClick={onRedo}
             disabled={!canRedo}
-            className="p-1.5 text-xs text-primary hover:bg-bg rounded-[4px] transition-colors disabled:opacity-35 disabled:cursor-not-allowed"
+            className="p-1.5 text-xs text-primary hover:bg-bg rounded-md transition-colors disabled:opacity-35 disabled:cursor-not-allowed"
             title="Redo (Ctrl+Y)"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -82,98 +59,41 @@ export function Toolbar({
 
         {/* Template dimensions */}
         {template?.width > 0 && (
-          <span className="text-[11px] text-muted bg-bg border border-border px-2 py-0.5 rounded-[4px]">
+          <span className="text-[11px] text-muted bg-bg border border-border px-2 py-0.5 rounded font-mono">
             {template.width} × {template.height} px
           </span>
         )}
       </div>
 
-      {/* Center: Session Indicator */}
-      <div className="flex items-center">
-        <span className="text-[11px] text-muted select-none">Saved</span>
+      {/* Center: Step description */}
+      <div className="hidden md:flex items-center space-x-2 text-xs text-muted">
+        <span className="font-semibold text-primary">Designer</span>
+        <span>—</span>
+        <span>Drag, resize, rotate and format certificate fields</span>
       </div>
 
-      {/* Right: Restart, Excel & Generate Actions */}
+      {/* Right: Signature Library & Continue */}
       <div className="flex items-center space-x-2">
-        {/* Restart Action */}
         <button
           type="button"
-          onClick={onRestart}
-          className="px-2.5 py-1 text-xs text-muted hover:text-error rounded-[4px] hover:bg-bg transition-colors"
-          title="Start over"
+          onClick={onOpenSignatures}
+          className="px-3 py-1.5 text-xs font-medium text-primary bg-surface border border-border hover:bg-bg rounded-lg transition-colors flex items-center space-x-1.5"
+          title="Manage saved signatures"
         >
-          Restart
+          <span>✍</span>
+          <span>Signatures</span>
         </button>
 
-        <div className="h-3.5 w-px bg-border"></div>
-
-        {/* Excel Hidden File Input */}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".xlsx, .xls, .csv"
-          className="hidden"
-          onChange={handleExcelFileChange}
-        />
-
-        {/* Excel Loaded Badge */}
-        {hasRows ? (
-          <div className="flex items-center space-x-2 px-2.5 py-1 bg-bg border border-border rounded-[6px] text-xs text-primary">
-            <span
-              onClick={onOpenDataView}
-              className="max-w-[120px] truncate font-medium cursor-pointer hover:underline"
-              title="Click to view loaded data"
-            >
-              {excel.fileName || 'participants'}
-            </span>
-            <span
-              onClick={onOpenDataView}
-              className="text-muted cursor-pointer hover:underline"
-            >
-              ({excel.rows.length})
-            </span>
-            <button
-              type="button"
-              onClick={onOpenMapping}
-              title="Remap columns"
-              className="text-accent hover:underline text-xs font-medium ml-0.5"
-            >
-              Map
-            </button>
-            <button
-              type="button"
-              onClick={handleClearExcel}
-              title="Remove file"
-              className="text-muted hover:text-primary text-xs ml-1"
-            >
-              ✕
-            </button>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="px-3 py-1.5 text-xs font-medium text-primary bg-surface border border-border hover:bg-bg rounded-[6px] transition-colors"
-          >
-            Upload Excel
-          </button>
-        )}
-
-        {/* Primary Action: Generate Certificates */}
+        {/* Primary Continue Button to Step 2 */}
         <button
           type="button"
-          onClick={onOpenGenerate}
-          className="px-4 py-1.5 text-xs font-medium text-white bg-accent hover:bg-accent-hover rounded-[6px] transition-colors shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
-          disabled={!hasRows || state.fields.length === 0}
-          title={
-            !hasRows
-              ? 'Upload an Excel or CSV file first'
-              : state.fields.length === 0
-              ? 'Add at least one field to generate'
-              : 'Generate certificates'
-          }
+          onClick={onContinueToParticipants}
+          className="px-4 py-1.5 text-xs font-medium text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg transition-colors shadow-xs flex items-center space-x-1.5"
+          title="Proceed to participants import"
         >
-          Generate {hasRows ? `(${excel.rows.length})` : ''}
+          <span>Continue to Participants</span>
+          {participantCount > 0 && <span className="font-mono text-indigo-200">({participantCount})</span>}
+          <span>→</span>
         </button>
       </div>
     </header>
