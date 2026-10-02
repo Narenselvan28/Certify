@@ -263,6 +263,9 @@
           <button type="button" data-field-type="date" class="btn-add-field px-2.5 py-1 text-xs font-medium text-[#171717] bg-white hover:bg-[#F7F7F5] border border-[#E5E5E5] rounded-[4px] transition-colors">
             + Date
           </button>
+          <button type="button" data-field-type="phone" class="btn-add-field px-2.5 py-1 text-xs font-medium text-[#171717] bg-white hover:bg-[#F7F7F5] border border-[#E5E5E5] rounded-[4px] transition-colors">
+            + Phone
+          </button>
           <button type="button" data-field-type="custom" class="btn-add-field px-2.5 py-1 text-xs font-medium text-[#6B6B6B] hover:text-[#171717] bg-white hover:bg-[#F7F7F5] border border-dashed border-[#D4D4D4] rounded-[4px] transition-colors">
             + Custom
           </button>
@@ -319,6 +322,10 @@
           <button type="button" id="btn-preview-back-editor" class="px-3 py-1.5 text-xs font-medium text-[#171717] bg-white border border-[#E5E5E5] rounded-[6px] hover:bg-[#F7F7F5] transition-colors">
             Edit Fields
           </button>
+          <button type="button" id="btn-send-all-whatsapp" class="flex items-center space-x-1.5 px-3 py-1.5 text-xs font-medium text-[#16A34A] bg-green-50 hover:bg-green-100 border border-green-200 rounded-[6px] transition-colors" title="Send all certificates via WhatsApp">
+            <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.582 2.128 2.182-.573c.978.58 1.911.928 3.145.929 3.178 0 5.767-2.587 5.768-5.766.001-3.187-2.575-5.77-5.764-5.771zm3.392 8.244c-.144.405-.837.774-1.17.824-.299.045-.677.063-1.092-.069-.252-.08-.575-.187-.988-.365-1.739-.751-2.874-2.502-2.961-2.617-.087-.116-.708-.94-.708-1.793s.448-1.273.607-1.446c.159-.173.346-.217.462-.217l.332.007c.106.005.249-.04.39.298.144.347.491 1.2.534 1.287.043.087.072.188.014.304-.058.116-.087.188-.173.289l-.26.304c-.087.086-.177.18-.076.354.101.174.449.741.964 1.201.662.591 1.221.774 1.394.86s.275.072.376-.043c.101-.116.433-.506.549-.68.116-.173.231-.145.39-.087s1.011.477 1.184.564.289.13.332.202c.045.072.045.419-.1.825zm-3.423-10.416c-4.402 0-7.985 3.583-7.986 7.988 0 1.408.365 2.784 1.059 3.991l-1.073 3.921 4.025-1.055c1.164.635 2.478.971 3.82.971 4.402 0 7.986-3.584 7.986-7.989 0-4.406-3.582-7.99-7.986-7.99z"/></svg>
+            <span>Send All via WhatsApp</span>
+          </button>
           <button type="button" id="btn-preview-export" class="px-4 py-1.5 text-xs font-medium text-white bg-[#4F46E5] hover:bg-[#4338CA] rounded-[6px] transition-colors">
             Export
           </button>
@@ -335,32 +342,51 @@
             <canvas id="single-preview-canvas" class="max-w-full max-h-[70vh] object-contain block"></canvas>
           </div>
 
-          <!-- Bottom Understated Navigation Controls -->
-          <div class="mt-4 flex items-center space-x-3 bg-white px-4 py-2 border border-[#E5E5E5] rounded-[6px]">
-            <button type="button" id="btn-prev-cert" class="px-2 py-1 text-xs font-medium text-[#171717] hover:bg-[#F7F7F5] rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
-              ‹ Previous
-            </button>
+          <!-- Bottom Understated Navigation Controls & WhatsApp Action -->
+          <div class="mt-4 flex flex-wrap items-center justify-between gap-3 bg-white px-4 py-2 border border-[#E5E5E5] rounded-[6px] max-w-full">
+            <!-- Left: Pagination -->
+            <div class="flex items-center space-x-2">
+              <button type="button" id="btn-prev-cert" class="px-2 py-1 text-xs font-medium text-[#171717] hover:bg-[#F7F7F5] rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                ‹ Previous
+              </button>
 
-            <span id="preview-index-text" class="text-xs font-medium text-[#171717] min-w-[70px] text-center">
-              1 / 250
-            </span>
+              <span id="preview-index-text" class="text-xs font-medium text-[#171717] min-w-[64px] text-center">
+                1 / 250
+              </span>
 
-            <button type="button" id="btn-next-cert" class="px-2 py-1 text-xs font-medium text-[#171717] hover:bg-[#F7F7F5] rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
-              Next ›
-            </button>
+              <button type="button" id="btn-next-cert" class="px-2 py-1 text-xs font-medium text-[#171717] hover:bg-[#F7F7F5] rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed">
+                Next ›
+              </button>
 
-            <div class="h-4 border-r border-[#E5E5E5]"></div>
+              <div class="h-4 border-r border-[#E5E5E5]"></div>
 
-            <!-- Jump to number -->
-            <div class="flex items-center space-x-1.5">
-              <span class="text-xs text-[#6B6B6B]">Go to:</span>
-              <input type="number" id="preview-jump-input" min="1" max="250" value="1" class="w-12 px-1.5 py-0.5 text-xs text-center border border-[#E5E5E5] rounded-[4px] focus:outline-none focus:border-[#4F46E5] text-[#171717]">
+              <!-- Jump to number -->
+              <div class="flex items-center space-x-1.5">
+                <span class="text-xs text-[#6B6B6B]">Go:</span>
+                <input type="number" id="preview-jump-input" min="1" max="250" value="1" class="w-11 px-1 py-0.5 text-xs text-center border border-[#E5E5E5] rounded-[4px] focus:outline-none focus:border-[#4F46E5] text-[#171717]">
+              </div>
             </div>
 
-            <!-- Current Participant Summary Tag -->
-            <span id="preview-participant-tag" class="text-xs text-[#6B6B6B] truncate max-w-[200px] border-l border-[#E5E5E5] pl-3">
-              Participant Name
-            </span>
+            <!-- Center: Current Participant Summary (Name · Meta · Phone) -->
+            <div class="flex items-center space-x-2 text-xs border-l border-[#E5E5E5] pl-3">
+              <span id="preview-participant-tag" class="font-medium text-[#171717] truncate max-w-[150px]">
+                Participant Name
+              </span>
+              <span id="preview-meta-tag" class="text-[#6B6B6B] truncate max-w-[140px]">
+                --
+              </span>
+              <span id="preview-phone-tag" class="font-mono text-[#16A34A] text-[11px] bg-green-50 px-1.5 py-0.5 rounded border border-green-100">
+                --
+              </span>
+            </div>
+
+            <!-- Right: WhatsApp Action Button -->
+            <div class="flex items-center space-x-2 border-l border-[#E5E5E5] pl-3">
+              <button type="button" id="btn-preview-whatsapp" class="flex items-center space-x-1.5 px-3 py-1 text-xs font-medium text-[#16A34A] bg-green-50 hover:bg-green-100 border border-green-200 rounded-[4px] transition-colors disabled:opacity-35 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400 disabled:border-gray-200" title="Share via WhatsApp">
+                <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.582 2.128 2.182-.573c.978.58 1.911.928 3.145.929 3.178 0 5.767-2.587 5.768-5.766.001-3.187-2.575-5.77-5.764-5.771zm3.392 8.244c-.144.405-.837.774-1.17.824-.299.045-.677.063-1.092-.069-.252-.08-.575-.187-.988-.365-1.739-.751-2.874-2.502-2.961-2.617-.087-.116-.708-.94-.708-1.793s.448-1.273.607-1.446c.159-.173.346-.217.462-.217l.332.007c.106.005.249-.04.39.298.144.347.491 1.2.534 1.287.043.087.072.188.014.304-.058.116-.087.188-.173.289l-.26.304c-.087.086-.177.18-.076.354.101.174.449.741.964 1.201.662.591 1.221.774 1.394.86s.275.072.376-.043c.101-.116.433-.506.549-.68.116-.173.231-.145.39-.087s1.011.477 1.184.564.289.13.332.202c.045.072.045.419-.1.825zm-3.423-10.416c-4.402 0-7.985 3.583-7.986 7.988 0 1.408.365 2.784 1.059 3.991l-1.073 3.921 4.025-1.055c1.164.635 2.478.971 3.82.971 4.402 0 7.986-3.584 7.986-7.989 0-4.406-3.582-7.99-7.986-7.99z"/></svg>
+                <span>WhatsApp</span>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -494,6 +520,118 @@
           </button>
           <button type="button" id="btn-recovery-restore" class="px-3.5 py-1.5 text-xs font-medium text-[#171717] bg-white border border-[#E5E5E5] rounded-[6px] hover:bg-[#F7F7F5] transition-colors">
             Restore Available
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal 7: WhatsApp Send Confirmation Modal -->
+    <div id="modal-wa-confirm" class="hidden fixed inset-0 z-50 bg-[#171717]/40 flex items-center justify-center p-4">
+      <div class="bg-white rounded-[8px] max-w-sm w-full border border-[#E5E5E5] p-6" style="box-shadow: 0 16px 40px rgba(0, 0, 0, 0.08);">
+        <h3 class="text-base font-semibold text-[#171717] mb-2">Send certificates via WhatsApp?</h3>
+
+        <!-- Summary Stats -->
+        <div id="wa-confirm-stats" class="mb-5 bg-[#F7F7F5] border border-[#E5E5E5] rounded-[6px] p-3 space-y-1 text-xs text-[#6B6B6B]">
+          <div class="flex justify-between">
+            <span>Total certificates</span>
+            <span id="wa-stat-total" class="font-semibold text-[#171717]">--</span>
+          </div>
+          <div class="flex justify-between">
+            <span>Valid WhatsApp numbers</span>
+            <span id="wa-stat-valid" class="font-semibold text-[#16A34A]">--</span>
+          </div>
+          <div class="flex justify-between">
+            <span>Missing phone numbers</span>
+            <span id="wa-stat-missing" class="font-semibold text-[#6B6B6B]">--</span>
+          </div>
+          <div class="flex justify-between">
+            <span>Invalid phone numbers</span>
+            <span id="wa-stat-invalid" class="font-semibold text-[#DC2626]">--</span>
+          </div>
+        </div>
+
+        <!-- Backend URL config (dev helper) -->
+        <div class="mb-4">
+          <label for="wa-backend-url" class="block text-xs text-[#6B6B6B] mb-1">Backend URL</label>
+          <input type="text" id="wa-backend-url" class="w-full px-2.5 py-1.5 text-xs border border-[#E5E5E5] rounded-[4px] focus:outline-none focus:border-[#4F46E5] text-[#171717] font-mono" placeholder="http://localhost:8001" value="http://localhost:8001">
+        </div>
+
+        <p id="wa-confirm-skip-note" class="text-xs text-[#6B6B6B] mb-5 hidden">Participants without valid phone numbers will be skipped.</p>
+
+        <div class="flex items-center justify-end space-x-2">
+          <button type="button" id="btn-wa-confirm-cancel" class="px-3.5 py-1.5 text-xs font-medium text-[#171717] bg-white border border-[#E5E5E5] rounded-[6px] hover:bg-[#F7F7F5] transition-colors">
+            Cancel
+          </button>
+          <button type="button" id="btn-wa-confirm-start" class="px-4 py-1.5 text-xs font-medium text-white bg-[#16A34A] hover:bg-[#15803D] rounded-[6px] transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+            Start Sending
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal 8: WhatsApp Delivery Progress Modal -->
+    <div id="modal-wa-progress" class="hidden fixed inset-0 z-50 bg-[#171717]/40 flex items-center justify-center p-4">
+      <div class="bg-white rounded-[8px] max-w-sm w-full border border-[#E5E5E5] p-6" style="box-shadow: 0 16px 40px rgba(0, 0, 0, 0.08);">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-semibold text-[#171717]">Sending via WhatsApp</h3>
+          <span id="wa-progress-counter" class="text-xs font-mono text-[#6B6B6B]">0 / 0</span>
+        </div>
+
+        <!-- Progress bar -->
+        <div class="w-full bg-[#E5E5E5] rounded-full h-1.5 mb-3 overflow-hidden">
+          <div id="wa-progress-bar" class="bg-[#16A34A] h-1.5 rounded-full transition-all duration-300 w-0"></div>
+        </div>
+
+        <!-- Current status -->
+        <p id="wa-progress-status" class="text-xs text-[#6B6B6B] truncate mb-3">Preparing...</p>
+
+        <!-- Live stats row -->
+        <div class="flex items-center space-x-4 text-xs">
+          <span class="text-[#16A34A]">✓ <span id="wa-live-sent">0</span> sent</span>
+          <span class="text-[#DC2626]">✕ <span id="wa-live-failed">0</span> failed</span>
+          <span class="text-[#6B6B6B]">— <span id="wa-live-skipped">0</span> skipped</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal 9: WhatsApp Delivery Results Modal -->
+    <div id="modal-wa-results" class="hidden fixed inset-0 z-50 bg-[#171717]/40 flex items-center justify-center p-4">
+      <div class="bg-white rounded-[8px] max-w-sm w-full border border-[#E5E5E5] p-6" style="box-shadow: 0 16px 40px rgba(0, 0, 0, 0.08);">
+        <h3 class="text-base font-semibold text-[#171717] mb-4">WhatsApp Delivery Complete</h3>
+
+        <!-- Result summary -->
+        <div class="bg-[#F7F7F5] border border-[#E5E5E5] rounded-[6px] p-3 mb-4 space-y-1 text-xs text-[#6B6B6B]">
+          <div class="flex justify-between">
+            <span>Total</span>
+            <span id="wa-result-total" class="font-semibold text-[#171717]">--</span>
+          </div>
+          <div class="flex justify-between">
+            <span>Sent</span>
+            <span id="wa-result-sent" class="font-semibold text-[#16A34A]">--</span>
+          </div>
+          <div class="flex justify-between">
+            <span>Failed</span>
+            <span id="wa-result-failed" class="font-semibold text-[#DC2626]">--</span>
+          </div>
+          <div class="flex justify-between">
+            <span>Skipped</span>
+            <span id="wa-result-skipped" class="font-semibold text-[#6B6B6B]">--</span>
+          </div>
+        </div>
+
+        <!-- Failed list (shown only when there are failures) -->
+        <div id="wa-failed-list-container" class="hidden mb-4">
+          <p class="text-xs font-medium text-[#171717] mb-2">Failed deliveries:</p>
+          <div id="wa-failed-list" class="max-h-32 overflow-y-auto space-y-1 text-xs text-[#DC2626] bg-red-50 border border-red-100 rounded-[4px] p-2">
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end space-x-2">
+          <button type="button" id="btn-wa-results-retry" class="hidden px-3.5 py-1.5 text-xs font-medium text-white bg-[#DC2626] hover:bg-[#B91C1C] rounded-[6px] transition-colors">
+            Retry Failed
+          </button>
+          <button type="button" id="btn-wa-results-close" class="px-4 py-1.5 text-xs font-medium text-[#171717] bg-white border border-[#E5E5E5] rounded-[6px] hover:bg-[#F7F7F5] transition-colors">
+            Close
           </button>
         </div>
       </div>

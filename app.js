@@ -391,6 +391,7 @@ const SessionManager = {
           rows: ExcelManager.rows
         },
         mappings: MappingManager.mappings,
+        phoneColumn: MappingManager.phoneColumn,
         preview: {
           currentIndex: PreviewManager.currentIndex,
           viewMode: PreviewManager.viewMode
@@ -481,8 +482,12 @@ const SessionManager = {
         if (rcText) rcText.textContent = `(${ExcelManager.rows.length})`;
       }
 
-      // Restore column mappings
+      // Restore column mappings & phone column
       MappingManager.mappings = session.mappings || {};
+      MappingManager.phoneColumn = session.phoneColumn || null;
+      if (!MappingManager.phoneColumn && session.excel?.headers) {
+        MappingManager.detectPhoneColumn(session.excel.headers);
+      }
 
       // Restore Page and View
       const targetPage = session.page || 'editor';
@@ -542,6 +547,7 @@ const RestartManager = {
     FieldManager.clear();
     ExcelManager.reset();
     MappingManager.mappings = {};
+    MappingManager.phoneColumn = null;
     HistoryManager.clear();
     PreviewManager.participants = [];
     PreviewManager.currentIndex = 0;
@@ -845,6 +851,18 @@ const FieldManager = {
       width: 0.25,
       height: 0.04,
       fontSizePx: 18,
+      fontWeight: 'normal',
+      fontFamily: 'Inter',
+      align: 'center',
+      autoFit: false
+    },
+    phone: {
+      type: 'phone',
+      label: 'Phone Number',
+      placeholder: '{{PHONE}}',
+      width: 0.30,
+      height: 0.05,
+      fontSizePx: 20,
       fontWeight: 'normal',
       fontFamily: 'Inter',
       align: 'center',
@@ -1561,6 +1579,7 @@ const ExcelManager = {
 // ============================================================================
 const MappingManager = {
   mappings: {}, // field.id -> excelHeader
+  phoneColumn: null, // excelHeader for participant phone number
 
   aliases: {
     name: [
@@ -1582,12 +1601,33 @@ const MappingManager = {
     ],
     date: [
       'date', 'event date', 'event_date', 'issue date', 'date of event', 'dated'
+    ],
+    phone: [
+      'phone', 'phone number', 'mobile', 'mobile number', 'contact', 'contact number', 
+      'whatsapp', 'whatsapp number', 'phone_number', 'mobile_number', 'contact_no', 
+      'mobile_no', 'phone no', 'mobile no'
     ]
+  },
+
+  detectPhoneColumn(headers) {
+    if (!headers || headers.length === 0) return null;
+    const phoneAliases = this.aliases.phone;
+    for (const h of headers) {
+      const hClean = h.toLowerCase().trim().replace(/[_\-\.]/g, ' ');
+      if (phoneAliases.includes(hClean) || phoneAliases.includes(hClean.replace(/\s+/g, ''))) {
+        this.phoneColumn = h;
+        return h;
+      }
+    }
+    return null;
   },
 
   autoMapFields(fields, headers) {
     const newMappings = {};
     let allConfident = true;
+
+    // Detect phone column for WhatsApp sharing
+    this.detectPhoneColumn(headers);
 
     fields.forEach(field => {
       let matchedHeader = null;
@@ -1621,6 +1661,9 @@ const MappingManager = {
 
       if (matchedHeader) {
         newMappings[field.id] = matchedHeader;
+        if (field.type === 'phone') {
+          this.phoneColumn = matchedHeader;
+        }
       } else {
         allConfident = false;
       }
@@ -1635,7 +1678,18 @@ const MappingManager = {
     const listEl = document.getElementById('mapping-list');
     listEl.innerHTML = '';
 
-    fields.forEach(field => {
+    const mappingItems = [...fields];
+    const hasPhoneField = fields.some(f => f.type === 'phone');
+    if (!hasPhoneField) {
+      mappingItems.push({
+        id: '_phone_column',
+        label: 'Phone (WhatsApp)',
+        placeholder: 'Participant contact number',
+        type: 'phone'
+      });
+    }
+
+    mappingItems.forEach(field => {
       const row = document.createElement('div');
       row.className = 'flex items-center justify-between py-2.5 border-b border-[#E5E5E5] last:border-b-0 text-xs';
 
@@ -1652,8 +1706,10 @@ const MappingManager = {
       select.dataset.fieldId = field.id;
 
       select.innerHTML = '<option value="">-- None / Skip --</option>';
+      const currentSelected = (field.id === '_phone_column') ? this.phoneColumn : this.mappings[field.id];
+
       headers.forEach(h => {
-        const selected = this.mappings[field.id] === h ? 'selected' : '';
+        const selected = currentSelected === h ? 'selected' : '';
         select.innerHTML += `<option value="${h}" ${selected}>${h}</option>`;
       });
 
@@ -1671,10 +1727,18 @@ const MappingManager = {
       selects.forEach(sel => {
         const fId = sel.dataset.fieldId;
         const val = sel.value;
-        if (val) {
-          this.mappings[fId] = val;
+        if (fId === '_phone_column') {
+          this.phoneColumn = val || null;
         } else {
-          delete this.mappings[fId];
+          if (val) {
+            this.mappings[fId] = val;
+            const targetField = FieldManager.getField(fId);
+            if (targetField && targetField.type === 'phone') {
+              this.phoneColumn = val;
+            }
+          } else {
+            delete this.mappings[fId];
+          }
         }
       });
       ModalManager.close('modal-mapping');
@@ -1790,7 +1854,191 @@ const CertificateRenderer = {
 };
 
 // ============================================================================
-// 14. PREVIEW MANAGER (Single Preview, Grid View & Pagination)
+// 14. WHATSAPP MANAGER (Phone Normalization & Personalized Sharing)
+// ============================================================================
+const WhatsAppManager = {
+  phoneAliases: [
+    'phone', 'phone number', 'mobile', 'mobile number', 'contact', 
+    'contact number', 'whatsapp', 'whatsapp number', 'phone_number', 
+    'mobile_number', 'contact_no', 'mobile_no', 'phone no', 'mobile no'
+  ],
+
+  normalizePhoneNumber(rawPhone) {
+    if (rawPhone === undefined || rawPhone === null) return null;
+    let str = String(rawPhone).trim();
+    if (!str) return null;
+
+    // Strip trailing .0 from Excel floating numbers
+    str = str.replace(/\.0+$/, '');
+
+    // Extract digits only
+    const digits = str.replace(/\D/g, '');
+    if (!digits) return null;
+
+    // 10 digits: standard Indian mobile number -> prepend 91
+    if (digits.length === 10) {
+      return '91' + digits;
+    }
+
+    // 11 digits starting with 0: e.g. 09876543210 -> 919876543210
+    if (digits.length === 11 && digits.startsWith('0')) {
+      return '91' + digits.substring(1);
+    }
+
+    // 12 digits starting with 91: already normalized Indian number
+    if (digits.length === 12 && digits.startsWith('91')) {
+      return digits;
+    }
+
+    // Valid international E.164 numbers (10 to 15 digits)
+    if (digits.length >= 10 && digits.length <= 15) {
+      return digits;
+    }
+
+    // Other lengths cannot be safely interpreted
+    return null;
+  },
+
+  formatPhoneDisplay(normalizedPhone) {
+    if (!normalizedPhone) return '';
+    if (normalizedPhone.startsWith('91') && normalizedPhone.length === 12) {
+      return `+91 ${normalizedPhone.slice(2, 7)} ${normalizedPhone.slice(7)}`;
+    }
+    return `+${normalizedPhone}`;
+  },
+
+  getParticipantPhone(row) {
+    if (!row) return '';
+
+    // 1. If a placed field of type 'phone' is mapped
+    const phoneField = FieldManager.fields.find(f => f.type === 'phone');
+    if (phoneField && MappingManager.mappings[phoneField.id]) {
+      const val = row[MappingManager.mappings[phoneField.id]];
+      if (val !== undefined && val !== null && String(val).trim() !== '') {
+        return String(val).trim();
+      }
+    }
+
+    // 2. If MappingManager has detected/selected a phoneColumn
+    if (MappingManager.phoneColumn && row[MappingManager.phoneColumn] !== undefined) {
+      const val = row[MappingManager.phoneColumn];
+      if (val !== undefined && val !== null && String(val).trim() !== '') {
+        return String(val).trim();
+      }
+    }
+
+    // 3. Fallback: match row keys to phone aliases
+    for (const key of Object.keys(row)) {
+      const cleanKey = key.toLowerCase().trim().replace(/[_\-\.]/g, ' ');
+      if (this.phoneAliases.includes(cleanKey) || this.phoneAliases.includes(cleanKey.replace(/\s+/g, ''))) {
+        const val = row[key];
+        if (val !== undefined && val !== null && String(val).trim() !== '') {
+          return String(val).trim();
+        }
+      }
+    }
+
+    return '';
+  },
+
+  getParticipantName(row) {
+    if (!row) return 'Participant';
+    const nameField = FieldManager.fields.find(f => f.type === 'name');
+    if (nameField && MappingManager.mappings[nameField.id]) {
+      return String(row[MappingManager.mappings[nameField.id]] || 'Participant').trim();
+    }
+    for (const key of Object.keys(row)) {
+      if (key.toLowerCase().includes('name') && row[key]) return String(row[key]).trim();
+    }
+    return 'Participant';
+  },
+
+  getParticipantMeta(row) {
+    if (!row) return '';
+    const parts = [];
+
+    // Find Reg No
+    const regField = FieldManager.fields.find(f => f.type === 'reg_no');
+    if (regField && MappingManager.mappings[regField.id] && row[MappingManager.mappings[regField.id]]) {
+      parts.push(String(row[MappingManager.mappings[regField.id]]).trim());
+    } else {
+      for (const k of Object.keys(row)) {
+        if (/reg|roll/i.test(k) && row[k]) {
+          parts.push(String(row[k]).trim());
+          break;
+        }
+      }
+    }
+
+    // Find Dept
+    const deptField = FieldManager.fields.find(f => f.type === 'department');
+    if (deptField && MappingManager.mappings[deptField.id] && row[MappingManager.mappings[deptField.id]]) {
+      parts.push(String(row[MappingManager.mappings[deptField.id]]).trim());
+    } else {
+      for (const k of Object.keys(row)) {
+        if (/dept|department|branch/i.test(k) && row[k]) {
+          parts.push(String(row[k]).trim());
+          break;
+        }
+      }
+    }
+
+    return parts.filter(Boolean).join(' · ');
+  },
+
+  getEventName(row) {
+    // 1. From mapped event_name field
+    const eventField = FieldManager.fields.find(f => f.type === 'event_name');
+    if (eventField) {
+      if (MappingManager.mappings[eventField.id] && row && row[MappingManager.mappings[eventField.id]]) {
+        const val = String(row[MappingManager.mappings[eventField.id]]).trim();
+        if (val) return val;
+      }
+      if (eventField.placeholder && eventField.placeholder !== '{{EVENT_NAME}}') {
+        return eventField.placeholder;
+      }
+    }
+
+    // 2. From row columns matching 'event' or 'activity'
+    if (row) {
+      for (const k of Object.keys(row)) {
+        if (/event|activity|workshop|programme|program/i.test(k) && row[k]) {
+          const val = String(row[k]).trim();
+          if (val) return val;
+        }
+      }
+    }
+
+    // 3. Fallback to neutral wording as requested
+    return 'your event';
+  },
+
+  generateMessage(row) {
+    const name = this.getParticipantName(row);
+    const eventName = this.getEventName(row);
+
+    return `Hi ${name},\n\nThank you for participating in ${eventName}.\n\nYour participation certificate is ready.\n\nRegards,\nCertify`;
+  },
+
+  shareViaWhatsApp(row) {
+    const rawPhone = this.getParticipantPhone(row);
+    const normalized = this.normalizePhoneNumber(rawPhone);
+
+    if (!normalized) {
+      App.showToast('Phone number not available for this participant.', 'error');
+      return false;
+    }
+
+    const message = this.generateMessage(row);
+    const url = `https://wa.me/${normalized}?text=${encodeURIComponent(message)}`;
+
+    window.open(url, '_blank', 'noopener,noreferrer');
+    return true;
+  }
+};
+
+// ============================================================================
+// 15. PREVIEW MANAGER (Single Preview, Grid View, Pagination & WhatsApp)
 // ============================================================================
 const PreviewManager = {
   participants: [],
@@ -1834,6 +2082,16 @@ const PreviewManager = {
     document.getElementById('btn-preview-export').addEventListener('click', () => {
       ModalManager.openExportModal(this.participants.length);
     });
+
+    // WhatsApp Share button
+    const waBtn = document.getElementById('btn-preview-whatsapp');
+    if (waBtn) {
+      waBtn.addEventListener('click', () => {
+        if (this.participants.length === 0) return;
+        const row = this.participants[this.currentIndex];
+        WhatsAppManager.shareViaWhatsApp(row);
+      });
+    }
 
     // Arrow keys for preview navigation
     window.addEventListener('keydown', (e) => {
@@ -1942,13 +2200,45 @@ const PreviewManager = {
     document.getElementById('btn-prev-cert').disabled = this.currentIndex === 0;
     document.getElementById('btn-next-cert').disabled = this.currentIndex === this.participants.length - 1;
 
-    // Participant summary tag
-    const nameField = FieldManager.fields.find(f => f.type === 'name');
-    let participantName = 'Participant';
-    if (nameField && MappingManager.mappings[nameField.id]) {
-      participantName = row[MappingManager.mappings[nameField.id]] || 'Participant';
+    // Participant summary (Name · Meta · Phone)
+    const name = WhatsAppManager.getParticipantName(row);
+    const meta = WhatsAppManager.getParticipantMeta(row);
+    const rawPhone = WhatsAppManager.getParticipantPhone(row);
+    const normalizedPhone = WhatsAppManager.normalizePhoneNumber(rawPhone);
+    const displayPhone = WhatsAppManager.formatPhoneDisplay(normalizedPhone);
+
+    const nameEl = document.getElementById('preview-participant-tag');
+    if (nameEl) nameEl.textContent = name;
+
+    const metaEl = document.getElementById('preview-meta-tag');
+    if (metaEl) {
+      metaEl.textContent = meta || '';
+      metaEl.style.display = meta ? 'inline' : 'none';
     }
-    document.getElementById('preview-participant-tag').textContent = participantName;
+
+    const phoneEl = document.getElementById('preview-phone-tag');
+    if (phoneEl) {
+      if (normalizedPhone) {
+        phoneEl.textContent = displayPhone;
+        phoneEl.className = 'font-mono text-[#16A34A] text-[11px] bg-green-50 px-1.5 py-0.5 rounded border border-green-100 inline-block';
+        phoneEl.title = `WhatsApp: ${displayPhone}`;
+      } else {
+        phoneEl.textContent = rawPhone ? 'Invalid phone' : 'No phone';
+        phoneEl.className = 'font-mono text-gray-400 text-[11px] bg-gray-50 px-1.5 py-0.5 rounded border border-gray-200 inline-block';
+        phoneEl.title = rawPhone ? `Invalid phone: ${rawPhone}` : 'Phone number not available';
+      }
+    }
+
+    const waBtn = document.getElementById('btn-preview-whatsapp');
+    if (waBtn) {
+      if (normalizedPhone) {
+        waBtn.disabled = false;
+        waBtn.title = `Share with ${name} (${displayPhone})`;
+      } else {
+        waBtn.disabled = true;
+        waBtn.title = 'Phone number not available';
+      }
+    }
   },
 
   async renderGridView() {
@@ -1969,11 +2259,10 @@ const PreviewManager = {
       thumbCanvas.height = thumbHeight;
       card.appendChild(thumbCanvas);
 
-      const nameField = FieldManager.fields.find(f => f.type === 'name');
-      let pName = 'Participant';
-      if (nameField && MappingManager.mappings[nameField.id]) {
-        pName = row[MappingManager.mappings[nameField.id]] || 'Participant';
-      }
+      const pName = WhatsAppManager.getParticipantName(row);
+      const rawPhone = WhatsAppManager.getParticipantPhone(row);
+      const normalizedPhone = WhatsAppManager.normalizePhoneNumber(rawPhone);
+      const displayPhone = WhatsAppManager.formatPhoneDisplay(normalizedPhone);
 
       const meta = document.createElement('div');
       meta.className = 'w-full mt-2 flex items-center justify-between text-[11px] text-[#6B6B6B]';
@@ -1982,6 +2271,29 @@ const PreviewManager = {
         <span class="font-medium text-[#171717] truncate max-w-[150px]">${pName}</span>
       `;
       card.appendChild(meta);
+
+      // Compact WhatsApp Action on Card
+      const actionRow = document.createElement('div');
+      actionRow.className = 'w-full mt-2 pt-1.5 border-t border-[#F0F0F0] flex items-center justify-between';
+
+      const waBtn = document.createElement('button');
+      waBtn.type = 'button';
+      waBtn.className = 'w-full flex items-center justify-center space-x-1.5 py-1 px-2 text-[11px] font-medium rounded transition-colors ' +
+        (normalizedPhone ? 'text-[#16A34A] bg-green-50 hover:bg-green-100 border border-green-200' : 'text-gray-400 bg-gray-50 border border-gray-200 opacity-40 cursor-not-allowed');
+      waBtn.title = normalizedPhone ? `Share with ${pName} (${displayPhone})` : 'Phone number not available';
+      waBtn.disabled = !normalizedPhone;
+      waBtn.innerHTML = `
+        <svg class="w-3 h-3 fill-current" viewBox="0 0 24 24"><path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.582 2.128 2.182-.573c.978.58 1.911.928 3.145.929 3.178 0 5.767-2.587 5.768-5.766.001-3.187-2.575-5.77-5.764-5.771zm3.392 8.244c-.144.405-.837.774-1.17.824-.299.045-.677.063-1.092-.069-.252-.08-.575-.187-.988-.365-1.739-.751-2.874-2.502-2.961-2.617-.087-.116-.708-.94-.708-1.793s.448-1.273.607-1.446c.159-.173.346-.217.462-.217l.332.007c.106.005.249-.04.39.298.144.347.491 1.2.534 1.287.043.087.072.188.014.304-.058.116-.087.188-.173.289l-.26.304c-.087.086-.177.18-.076.354.101.174.449.741.964 1.201.662.591 1.221.774 1.394.86s.275.072.376-.043c.101-.116.433-.506.549-.68.116-.173.231-.145.39-.087s1.011.477 1.184.564.289.13.332.202c.045.072.045.419-.1.825zm-3.423-10.416c-4.402 0-7.985 3.583-7.986 7.988 0 1.408.365 2.784 1.059 3.991l-1.073 3.921 4.025-1.055c1.164.635 2.478.971 3.82.971 4.402 0 7.986-3.584 7.986-7.989 0-4.406-3.582-7.99-7.986-7.99z"/></svg>
+        <span>WhatsApp</span>
+      `;
+      waBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (normalizedPhone) {
+          WhatsAppManager.shareViaWhatsApp(row);
+        }
+      });
+      actionRow.appendChild(waBtn);
+      card.appendChild(actionRow);
 
       card.addEventListener('click', () => {
         this.currentIndex = i;
@@ -2148,6 +2460,364 @@ const ZipExporter = {
 };
 
 // ============================================================================
+// 17. WHATSAPP DELIVERY MANAGER (Bulk Backend-Powered Certificate Delivery)
+// ============================================================================
+
+/**
+ * Default backend URL. Change this constant or use the runtime input in the
+ * confirmation modal to point to your deployed FastAPI backend.
+ * Never expose WHATSAPP_ACCESS_TOKEN here.
+ */
+const CERTIFY_API_BASE_URL_DEFAULT = 'http://localhost:8001';
+
+const WhatsAppDeliveryManager = {
+  // Delivery state
+  deliveryResults: [],   // { index, name, phone, status: 'sent'|'failed'|'skipped', error? }
+  isSending: false,
+  aborted: false,
+
+  // Resolved backend URL (set when user clicks Start Sending)
+  apiBaseUrl: CERTIFY_API_BASE_URL_DEFAULT,
+
+  // ── UI helpers ────────────────────────────────────────────────────────────
+  _el(id) { return document.getElementById(id); },
+
+  _setProgress(current, total, statusText, sentCount, failedCount, skippedCount) {
+    const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+    const counter = this._el('wa-progress-counter');
+    const bar = this._el('wa-progress-bar');
+    const status = this._el('wa-progress-status');
+    const liveSent = this._el('wa-live-sent');
+    const liveFailed = this._el('wa-live-failed');
+    const liveSkipped = this._el('wa-live-skipped');
+
+    if (counter) counter.textContent = `${current} / ${total}`;
+    if (bar) bar.style.width = `${pct}%`;
+    if (status) status.textContent = statusText || 'Processing...';
+    if (liveSent) liveSent.textContent = sentCount;
+    if (liveFailed) liveFailed.textContent = failedCount;
+    if (liveSkipped) liveSkipped.textContent = skippedCount;
+  },
+
+  // ── Pre-send validation ──────────────────────────────────────────────────
+
+  /**
+   * Classify all participants into valid / missing / invalid phone categories.
+   */
+  classifyPhones(participants) {
+    const valid = [];
+    const missing = [];
+    const invalid = [];
+
+    participants.forEach((row, idx) => {
+      const rawPhone = WhatsAppManager.getParticipantPhone(row);
+      if (!rawPhone || !String(rawPhone).trim()) {
+        missing.push(idx);
+      } else {
+        const normalized = WhatsAppManager.normalizePhoneNumber(rawPhone);
+        if (normalized) {
+          valid.push({ idx, row, normalized });
+        } else {
+          invalid.push({ idx, row, rawPhone });
+        }
+      }
+    });
+
+    return { valid, missing, invalid };
+  },
+
+  // ── Show confirmation modal ──────────────────────────────────────────────
+
+  showConfirmModal(participants) {
+    const { valid, missing, invalid } = this.classifyPhones(participants);
+    const total = participants.length;
+    const willSend = valid.length;
+    const willSkip = missing.length + invalid.length;
+
+    // Populate stats
+    const set = (id, val) => { const el = this._el(id); if (el) el.textContent = val; };
+    set('wa-stat-total', total);
+    set('wa-stat-valid', willSend);
+    set('wa-stat-missing', missing.length);
+    set('wa-stat-invalid', invalid.length);
+
+    // Skip note
+    const skipNote = this._el('wa-confirm-skip-note');
+    if (skipNote) skipNote.classList.toggle('hidden', willSkip === 0);
+
+    // Disable Start if nobody will be sent
+    const startBtn = this._el('btn-wa-confirm-start');
+    if (startBtn) startBtn.disabled = willSend === 0;
+
+    ModalManager.open('modal-wa-confirm');
+  },
+
+  // ── Core: send a single certificate via backend ──────────────────────────
+
+  async sendOne(apiBaseUrl, row, index) {
+    const name = WhatsAppManager.getParticipantName(row);
+    const rawPhone = WhatsAppManager.getParticipantPhone(row);
+    const normalized = WhatsAppManager.normalizePhoneNumber(rawPhone);
+    const eventName = WhatsAppManager.getEventName(row);
+
+    if (!normalized) {
+      return { status: 'skipped', name, phone: rawPhone };
+    }
+
+    // Generate PDF for this participant
+    let pdfBlob, pdfFilename;
+    try {
+      const w = TemplateManager.naturalWidth;
+      const h = TemplateManager.naturalHeight;
+      const result = await PDFExporter.generateSinglePDF(row, index, w, h);
+      pdfBlob = result.blob;
+      pdfFilename = result.filename;
+    } catch (err) {
+      return { status: 'failed', name, phone: normalized, error: `PDF generation failed: ${err.message}` };
+    }
+
+    // Encode PDF as base64
+    let b64;
+    try {
+      const arrayBuffer = await pdfBlob.arrayBuffer();
+      const uint8Array = new Uint8Array(arrayBuffer);
+      let binary = '';
+      for (let i = 0; i < uint8Array.length; i++) {
+        binary += String.fromCharCode(uint8Array[i]);
+      }
+      b64 = btoa(binary);
+    } catch (err) {
+      return { status: 'failed', name, phone: normalized, error: `Base64 encoding failed: ${err.message}` };
+    }
+
+    // POST to backend
+    const payload = {
+      name,
+      phone: normalized,
+      event_name: eventName || 'your event',
+      certificate: { filename: pdfFilename, base64: b64 }
+    };
+
+    try {
+      const response = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/whatsapp/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(60000),  // 60 s timeout per certificate
+      });
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => response.statusText);
+        return { status: 'failed', name, phone: normalized, error: `Backend HTTP ${response.status}: ${errText}` };
+      }
+
+      const data = await response.json();
+      if (data.success) {
+        return { status: 'sent', name, phone: normalized, message_id: data.message_id };
+      } else {
+        return { status: 'failed', name, phone: normalized, error: data.error || 'Unknown backend error' };
+      }
+
+    } catch (err) {
+      if (err.name === 'AbortError' || err.message?.includes('signal')) {
+        return { status: 'failed', name, phone: normalized, error: 'Request timeout (60s)' };
+      }
+      // Network / CORS / backend unavailable
+      return {
+        status: 'failed',
+        name,
+        phone: normalized,
+        error: `Could not reach backend (${apiBaseUrl}). Is it running?`
+      };
+    }
+  },
+
+  // ── Main send-all loop ────────────────────────────────────────────────────
+
+  async startSending(participants, onlyFailed = false) {
+    if (this.isSending) return;
+
+    const apiBaseUrl = (this._el('wa-backend-url')?.value || CERTIFY_API_BASE_URL_DEFAULT).trim();
+    this.apiBaseUrl = apiBaseUrl;
+
+    // Decide which indices to process
+    let targets;
+    if (onlyFailed) {
+      // Retry only previously-failed indices
+      targets = this.deliveryResults
+        .map((r, i) => r.status === 'failed' ? i : null)
+        .filter(i => i !== null);
+      if (targets.length === 0) {
+        App.showToast('No failed deliveries to retry.', 'info');
+        return;
+      }
+    } else {
+      // First run: all participants
+      this.deliveryResults = participants.map((row, idx) => ({
+        idx,
+        name: WhatsAppManager.getParticipantName(row),
+        phone: WhatsAppManager.getParticipantPhone(row),
+        status: 'pending',
+      }));
+      targets = participants.map((_, i) => i);
+    }
+
+    this.isSending = true;
+    this.aborted = false;
+
+    ModalManager.close('modal-wa-confirm');
+    ModalManager.close('modal-wa-results');
+    ModalManager.open('modal-wa-progress');
+
+    let sentCount = 0;
+    let failedCount = 0;
+    let skippedCount = 0;
+    const total = targets.length;
+
+    for (let i = 0; i < total; i++) {
+      if (this.aborted) break;
+
+      const participantIdx = targets[i];
+      const row = participants[participantIdx];
+      const name = WhatsAppManager.getParticipantName(row);
+
+      this._setProgress(
+        i + 1, total,
+        `Sending ${String(i + 1).padStart(3, '0')} / ${total}: ${name}...`,
+        sentCount, failedCount, skippedCount
+      );
+
+      const result = await this.sendOne(apiBaseUrl, row, participantIdx);
+      this.deliveryResults[participantIdx] = { idx: participantIdx, ...result };
+
+      if (result.status === 'sent') sentCount++;
+      else if (result.status === 'failed') failedCount++;
+      else skippedCount++;
+
+      this._setProgress(
+        i + 1, total,
+        result.status === 'sent'
+          ? `✓ ${name}`
+          : result.status === 'skipped'
+            ? `— ${name} (skipped)`
+            : `✕ ${name} (failed)`,
+        sentCount, failedCount, skippedCount
+      );
+
+      // Small delay to avoid hammering the API
+      await new Promise(r => setTimeout(r, 300));
+    }
+
+    this.isSending = false;
+    ModalManager.close('modal-wa-progress');
+    this.showResults(participants.length, sentCount, failedCount, skippedCount);
+  },
+
+  // ── Results modal ─────────────────────────────────────────────────────────
+
+  showResults(total, sent, failed, skipped) {
+    const set = (id, val) => { const el = this._el(id); if (el) el.textContent = val; };
+    set('wa-result-total', total);
+    set('wa-result-sent', sent);
+    set('wa-result-failed', failed);
+    set('wa-result-skipped', skipped);
+
+    // Failed list
+    const failedListContainer = this._el('wa-failed-list-container');
+    const failedListEl = this._el('wa-failed-list');
+    const retryBtn = this._el('btn-wa-results-retry');
+
+    const failedItems = this.deliveryResults.filter(r => r.status === 'failed');
+    if (failedItems.length > 0 && failedListContainer && failedListEl) {
+      failedListContainer.classList.remove('hidden');
+      failedListEl.innerHTML = failedItems.map(r =>
+        `<div class="truncate" title="${r.error || ''}">
+          ${r.name} (+${r.phone})<br>
+          <span class="opacity-70 text-[10px]">${r.error || 'Unknown error'}</span>
+        </div>`
+      ).join('');
+      if (retryBtn) retryBtn.classList.remove('hidden');
+    } else {
+      if (failedListContainer) failedListContainer.classList.add('hidden');
+      if (retryBtn) retryBtn.classList.add('hidden');
+    }
+
+    ModalManager.open('modal-wa-results');
+  },
+
+  // ── Check backend availability ───────────────────────────────────────────
+
+  async checkBackend(apiBaseUrl) {
+    try {
+      const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/health`, {
+        signal: AbortSignal.timeout(5000)
+      });
+      return resp.ok;
+    } catch {
+      return false;
+    }
+  },
+
+  // ── Bind all WhatsApp delivery UI events ─────────────────────────────────
+
+  bindEvents() {
+    // "Send All via WhatsApp" main button
+    const sendAllBtn = this._el('btn-send-all-whatsapp');
+    if (sendAllBtn) {
+      sendAllBtn.addEventListener('click', async () => {
+        const participants = PreviewManager.participants;
+        if (!participants || participants.length === 0) {
+          App.showToast('No certificates to send.', 'error');
+          return;
+        }
+        this.showConfirmModal(participants);
+      });
+    }
+
+    // Confirmation modal — Cancel
+    const cancelBtn = this._el('btn-wa-confirm-cancel');
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', () => ModalManager.close('modal-wa-confirm'));
+    }
+
+    // Confirmation modal — Start Sending
+    const startBtn = this._el('btn-wa-confirm-start');
+    if (startBtn) {
+      startBtn.addEventListener('click', async () => {
+        const apiBaseUrl = (this._el('wa-backend-url')?.value || CERTIFY_API_BASE_URL_DEFAULT).trim();
+
+        // Check if backend is reachable before starting
+        const available = await this.checkBackend(apiBaseUrl);
+        if (!available) {
+          App.showToast(
+            `Cannot reach backend at ${apiBaseUrl}. Start the backend server first.`,
+            'error'
+          );
+          return;
+        }
+
+        await this.startSending(PreviewManager.participants, false);
+      });
+    }
+
+    // Results modal — Close
+    const closeBtn = this._el('btn-wa-results-close');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => ModalManager.close('modal-wa-results'));
+    }
+
+    // Results modal — Retry Failed
+    const retryBtn = this._el('btn-wa-results-retry');
+    if (retryBtn) {
+      retryBtn.addEventListener('click', async () => {
+        ModalManager.close('modal-wa-results');
+        await this.startSending(PreviewManager.participants, true);
+      });
+    }
+  }
+};
+
+// ============================================================================
 // 17. MODAL MANAGER
 // ============================================================================
 const ModalManager = {
@@ -2212,6 +2882,7 @@ const App = {
     PreviewManager.init();
     NavigationManager.init();
     HistoryManager.initKeyboard();
+    WhatsAppDeliveryManager.bindEvents();
     this.bindGlobalEvents();
 
     // Check for existing session and restore automatically

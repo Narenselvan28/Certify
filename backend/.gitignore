@@ -1,0 +1,49 @@
+# ──────────────────────────────────────────────────────────────────────────
+# Certify Backend — .gitignore
+# ──────────────────────────────────────────────────────────────────────────
+
+# Environment secrets — NEVER commit these
+.env
+*.env
+!.env.example
+
+# Python virtual environment
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Logs
+*.log
+logs/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary certificate files (should never exist, but guard)
+*.pdf
+*.tmp

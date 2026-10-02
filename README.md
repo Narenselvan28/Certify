@@ -95,3 +95,120 @@ npx serve .
 ```
 
 Open `http://localhost:8000` in your web browser.
+
+---
+
+## 📱 WhatsApp Certificate Delivery
+
+Certify includes an optional backend that delivers each participant's certificate directly to their WhatsApp using the **official WhatsApp Business Cloud API (Meta)**.
+
+> The frontend (GitHub Pages) continues to work for generation and export **even if the backend is not running**.
+
+### Architecture
+
+```
+Certify Frontend (GitHub Pages)
+       ↓ HTTPS
+Certify Backend (FastAPI — your server)
+       ↓ HTTPS
+WhatsApp Business Cloud API (Meta)
+       ↓
+Individual participants
+```
+
+### 1. Prerequisites
+
+- A **Meta Developer account** with a WhatsApp Business App
+- A **WhatsApp Business Account** and approved phone number
+- A pre-approved **message template** (e.g. `certificate_delivery`)
+
+### 2. Backend Setup
+
+```bash
+cd backend
+
+# Create virtual environment
+python -m venv .venv
+
+# Activate (Windows)
+.venv\Scripts\activate
+
+# Activate (macOS / Linux)
+source .venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+```
+
+### 3. Configure Environment Variables
+
+```bash
+# Copy the example file
+copy .env.example .env     # Windows
+cp .env.example .env       # macOS / Linux
+
+# Edit .env with your real credentials
+```
+
+Required values in `backend/.env`:
+
+```env
+WHATSAPP_ACCESS_TOKEN=your_token
+WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id
+WHATSAPP_API_VERSION=v19.0
+CERTIFICATE_TEMPLATE_NAME=certificate_delivery
+CERTIFICATE_TEMPLATE_LANGUAGE=en
+WHATSAPP_TEST_MODE=false
+ALLOWED_ORIGINS=https://your-username.github.io
+```
+
+### 4. Running Locally
+
+**Terminal 1 — Frontend:**
+```bash
+python -m http.server 8000
+```
+
+**Terminal 2 — Backend:**
+```bash
+cd backend
+.venv\Scripts\activate
+uvicorn app.main:app --reload --port 8001
+```
+
+Open: `http://localhost:8000`  
+Backend API: `http://localhost:8001`  
+API Docs: `http://localhost:8001/docs`
+
+### 5. Test Mode
+
+During development, set `WHATSAPP_TEST_MODE=true` in `backend/.env`. The backend will validate payloads and simulate delivery without sending real WhatsApp messages.
+
+### 6. Sending Certificates
+
+1. Upload template → Position fields → Upload Excel → Generate
+2. On the Preview page, click **Send All via WhatsApp**
+3. Review the validation summary (valid / missing / invalid phones)
+4. Enter your backend URL (default: `http://localhost:8001`)
+5. Click **Start Sending** — progress is shown in real time
+6. After completion, failed deliveries are listed and can be **Retried**
+
+### 7. Production Deployment
+
+The backend is a standard ASGI FastAPI application. Deploy it to any platform supporting Python:
+
+- **Railway, Render, Fly.io**: Push `backend/` as a standalone project
+- **Docker**: `uvicorn app.main:app --host 0.0.0.0 --port 8001`
+- **Cloud VPS**: Use `uvicorn` behind `nginx` with HTTPS
+
+After deployment, set `ALLOWED_ORIGINS` to your GitHub Pages domain only (no wildcards).
+
+### 8. Security
+
+| Concern | Mitigation |
+|---------|-----------|
+| Access token in frontend | ❌ Never — token is backend-only |
+| `.env` committed to Git | ❌ Protected by `.gitignore` |
+| CORS unrestricted | ❌ Set `ALLOWED_ORIGINS` to your Pages URL only |
+| Participant data stored | ❌ Never — all processing is in-memory |
+| Certificate stored on server | ❌ Never — PDF bytes are discarded after sending |

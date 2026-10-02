@@ -2,3 +2,9 @@
 Thumbs.db
 node_modules/
 *.log
+
+# Backend secrets — NEVER commit
+backend/.env
+backend/*.env
+backend/.venv/
+backend/venv/
