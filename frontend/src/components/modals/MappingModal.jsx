@@ -1,16 +1,27 @@
 import { useState, useEffect } from 'react';
 import { Modal, ModalHeader, ModalBody, ModalFooter, BtnSecondary, BtnPrimary } from '../common/Modal.jsx';
 
-export function MappingModal({ isOpen, fields, headers, mappings, phoneColumn, onConfirm, onCancel }) {
+export function MappingModal({
+  isOpen,
+  fields,
+  headers,
+  mappings,
+  phoneColumn,
+  emailColumn,
+  onConfirm,
+  onCancel,
+}) {
   const [localMappings, setLocalMappings] = useState(mappings || {});
   const [localPhone, setLocalPhone] = useState(phoneColumn || '');
+  const [localEmail, setLocalEmail] = useState(emailColumn || '');
 
   useEffect(() => {
     if (isOpen) {
       setLocalMappings(mappings || {});
       setLocalPhone(phoneColumn || '');
+      setLocalEmail(emailColumn || '');
     }
-  }, [isOpen, mappings, phoneColumn]);
+  }, [isOpen, mappings, phoneColumn, emailColumn]);
 
   const handleChange = (fieldId, value) => {
     setLocalMappings(prev => {
@@ -22,7 +33,7 @@ export function MappingModal({ isOpen, fields, headers, mappings, phoneColumn, o
   };
 
   const handleConfirm = () => {
-    onConfirm(localMappings, localPhone || null);
+    onConfirm(localMappings, localPhone || null, localEmail || null);
   };
 
   return (
@@ -50,7 +61,7 @@ export function MappingModal({ isOpen, fields, headers, mappings, phoneColumn, o
             </div>
           ))}
 
-          {/* Phone column (always shown for WhatsApp delivery) */}
+          {/* Phone column for WhatsApp */}
           <div className="flex items-center justify-between gap-3 pt-2 border-t border-border">
             <div className="min-w-0">
               <div className="text-xs font-medium text-primary">WhatsApp Phone</div>
@@ -59,6 +70,22 @@ export function MappingModal({ isOpen, fields, headers, mappings, phoneColumn, o
             <select
               value={localPhone}
               onChange={e => setLocalPhone(e.target.value)}
+              className="px-2.5 py-1 text-xs border border-border rounded-[4px] focus:outline-none focus:border-accent bg-white text-primary min-w-[140px]"
+            >
+              <option value="">-- None / Skip --</option>
+              {headers.map(h => <option key={h} value={h}>{h}</option>)}
+            </select>
+          </div>
+
+          {/* Email column for Email Delivery */}
+          <div className="flex items-center justify-between gap-3 pt-2 border-t border-border">
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-primary">Email Address</div>
+              <div className="text-[11px] text-muted">For Email delivery &amp; fallback</div>
+            </div>
+            <select
+              value={localEmail}
+              onChange={e => setLocalEmail(e.target.value)}
               className="px-2.5 py-1 text-xs border border-border rounded-[4px] focus:outline-none focus:border-accent bg-white text-primary min-w-[140px]"
             >
               <option value="">-- None / Skip --</option>

@@ -2,7 +2,7 @@ import { useRef, useState, useEffect } from 'react';
 import { useAppContext, A } from '../context/AppContext.jsx';
 import { useEditor } from '../hooks/useEditor.js';
 import { parseExcelFile } from '../services/excel.js';
-import { autoMapFields, detectPhoneColumn } from '../utils/mapping.js';
+import { autoMapFields, detectPhoneColumn, detectEmailColumn } from '../utils/mapping.js';
 import { clearSession, clearTemplateAsset } from '../services/storage.js';
 
 import { Toolbar } from '../components/editor/Toolbar.jsx';
@@ -115,10 +115,14 @@ export function EditorPage({ onShowToast }) {
       const { mappings, confident } = autoMapFields(state.fields, headers);
       dispatch({ type: A.SET_MAPPINGS, mappings });
 
-      // Detect phone column
+      // Detect phone & email columns
       const detectedPhone = detectPhoneColumn(headers);
       if (detectedPhone) {
         dispatch({ type: A.SET_PHONE_COLUMN, phoneColumn: detectedPhone });
+      }
+      const detectedEmail = detectEmailColumn(headers);
+      if (detectedEmail) {
+        dispatch({ type: A.SET_EMAIL_COLUMN, emailColumn: detectedEmail });
       }
 
       onShowToast?.(`Loaded ${rowCount} rows from ${fileName}`, 'success');
@@ -134,9 +138,10 @@ export function EditorPage({ onShowToast }) {
   };
 
   // Confirm mapping modal
-  const handleConfirmMapping = (newMappings, newPhone) => {
+  const handleConfirmMapping = (newMappings, newPhone, newEmail) => {
     dispatch({ type: A.SET_MAPPINGS, mappings: newMappings });
     dispatch({ type: A.SET_PHONE_COLUMN, phoneColumn: newPhone });
+    dispatch({ type: A.SET_EMAIL_COLUMN, emailColumn: newEmail });
     setIsMappingOpen(false);
     onShowToast?.('Column mappings updated', 'success');
   };
@@ -220,6 +225,7 @@ export function EditorPage({ onShowToast }) {
         headers={state.excel?.headers || []}
         mappings={state.mappings || {}}
         phoneColumn={state.phoneColumn}
+        emailColumn={state.emailColumn}
         onConfirm={handleConfirmMapping}
         onCancel={() => setIsMappingOpen(false)}
       />

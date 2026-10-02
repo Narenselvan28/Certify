@@ -5,7 +5,7 @@ import { MAX_HISTORY } from '../constants/config.js';
 // ── Initial State ─────────────────────────────────────────────────────────────
 
 export const initialState = {
-  page: 'upload',         // 'upload' | 'editor' | 'preview'
+  page: 'upload',         // 'upload' | 'editor' | 'preview' | 'delivery'
   template: { name: null, src: null, width: 0, height: 0, aspectRatio: 1 },
   templateImage: null,    // loaded HTMLImageElement (not serializable — kept in state only)
   fields: [],
@@ -14,6 +14,7 @@ export const initialState = {
   excel: { fileName: null, headers: [], rows: [] },
   mappings: {},
   phoneColumn: null,
+  emailColumn: null,
   preview: { mode: 'single', currentIndex: 0 },
   delivery: { results: [], isSending: false, apiBaseUrl: 'http://localhost:8001' },
 };
@@ -31,6 +32,7 @@ export const A = {
   SET_EXCEL:          'SET_EXCEL',
   SET_MAPPINGS:       'SET_MAPPINGS',
   SET_PHONE_COLUMN:   'SET_PHONE_COLUMN',
+  SET_EMAIL_COLUMN:   'SET_EMAIL_COLUMN',
   SET_PREVIEW:        'SET_PREVIEW',
   SET_DELIVERY:       'SET_DELIVERY',
   RESET:              'RESET',
@@ -88,6 +90,9 @@ function reducer(state, action) {
 
     case A.SET_PHONE_COLUMN:
       return { ...state, phoneColumn: action.phoneColumn };
+
+    case A.SET_EMAIL_COLUMN:
+      return { ...state, emailColumn: action.emailColumn };
 
     case A.SET_PREVIEW:
       return { ...state, preview: { ...state.preview, ...action.preview } };

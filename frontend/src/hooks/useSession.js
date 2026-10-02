@@ -29,6 +29,7 @@ export function useSession() {
         excel: state.excel,
         mappings: state.mappings,
         phoneColumn: state.phoneColumn,
+        emailColumn: state.emailColumn,
         preview: state.preview,
       };
       saveSession(session);
@@ -88,6 +89,7 @@ export function useSession() {
 
       dispatch({ type: A.SET_MAPPINGS, mappings: session.mappings || {} });
       dispatch({ type: A.SET_PHONE_COLUMN, phoneColumn: session.phoneColumn || null });
+      dispatch({ type: A.SET_EMAIL_COLUMN, emailColumn: session.emailColumn || null });
 
       if (session.preview) {
         dispatch({ type: A.SET_PREVIEW, preview: session.preview });
@@ -124,7 +126,7 @@ export function useSession() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.page, state.template, state.fields, state.excel,
-      state.mappings, state.phoneColumn, state.preview]);
+      state.mappings, state.phoneColumn, state.emailColumn, state.preview]);
 
   return { restore, saveNow, scheduleSave, wipeSession, isRestoring };
 }

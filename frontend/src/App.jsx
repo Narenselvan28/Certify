@@ -7,6 +7,7 @@ import { loadImage } from './services/storage.js';
 import { UploadPage } from './pages/UploadPage.jsx';
 import { EditorPage } from './pages/EditorPage.jsx';
 import { PreviewPage } from './pages/PreviewPage.jsx';
+import { DeliveryCenter } from './pages/DeliveryCenter.jsx';
 import { TemplateRecoveryModal } from './components/modals/TemplateRecoveryModal.jsx';
 import { ToastContainer } from './components/common/Toast.jsx';
 
@@ -69,6 +70,7 @@ function MainRouter() {
       {state.page === 'upload' && <UploadPage onShowToast={showToast} />}
       {state.page === 'editor' && <EditorPage onShowToast={showToast} />}
       {state.page === 'preview' && <PreviewPage onShowToast={showToast} />}
+      {state.page === 'delivery' && <DeliveryCenter onShowToast={showToast} />}
 
       {/* Template Image Recovery Modal */}
       <TemplateRecoveryModal

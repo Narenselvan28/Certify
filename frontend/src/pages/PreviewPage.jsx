@@ -226,6 +226,7 @@ export function PreviewPage({ onShowToast }) {
         onRestart={() => setIsRestartOpen(true)}
         onOpenExport={() => setIsExportOpen(true)}
         onOpenWhatsApp={() => setIsWAConfirmOpen(true)}
+        onOpenDeliveryCenter={() => dispatch({ type: A.SET_PAGE, page: 'delivery' })}
       />
 
       {/* Main View Area */}

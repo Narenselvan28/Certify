@@ -1,0 +1,107 @@
+/**
+ * Certify Frontend — Multi-Channel Delivery Service
+ * Communicates with FastAPI Delivery Center endpoints.
+ */
+
+import { EMAIL_ALIASES } from '../utils/email.js';
+
+export function getParticipantEmail(row, fields, mappings, emailColumn) {
+  if (!row) return '';
+  const emailField = fields.find(f => f.type === 'email');
+  if (emailField && mappings[emailField.id]) {
+    const v = row[mappings[emailField.id]];
+    if (v !== undefined && String(v).trim()) return String(v).trim();
+  }
+  if (emailColumn && row[emailColumn] !== undefined) {
+    const v = row[emailColumn];
+    if (String(v).trim()) return String(v).trim();
+  }
+  // Fallback: scan row keys for email-like names
+  for (const key of Object.keys(row)) {
+    const clean = key.toLowerCase().trim().replace(/[_\-\.]/g, ' ');
+    if (EMAIL_ALIASES.some(a => clean.includes(a))) {
+      if (row[key] && String(row[key]).trim()) return String(row[key]).trim();
+    }
+  }
+  return '';
+}
+
+/** Preflight validation request */
+export async function validateDelivery(apiBaseUrl, participants, channels) {
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/delivery/validate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ participants, channels }),
+  });
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => resp.statusText);
+    throw new Error(`Validation failed: HTTP ${resp.status} - ${txt}`);
+  }
+  return await resp.json();
+}
+
+/** Start a bulk delivery background queue */
+export async function startDelivery(apiBaseUrl, participants, channels, enableFallback = true) {
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/delivery/start`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ participants, channels, enable_fallback: enableFallback }),
+  });
+  if (!resp.ok) {
+    const txt = await resp.text().catch(() => resp.statusText);
+    throw new Error(`Failed to start delivery: HTTP ${resp.status} - ${txt}`);
+  }
+  return await resp.json();
+}
+
+/** Poll real-time status of active delivery queue */
+export async function getDeliveryStatus(apiBaseUrl, deliveryId) {
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/delivery/${deliveryId}/status`, {
+    headers: { Accept: 'application/json' },
+  });
+  if (!resp.ok) {
+    throw new Error(`Failed to fetch status: HTTP ${resp.status}`);
+  }
+  return await resp.json();
+}
+
+/** Get final breakdown and results */
+export async function getDeliveryResults(apiBaseUrl, deliveryId) {
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/delivery/${deliveryId}/results`, {
+    headers: { Accept: 'application/json' },
+  });
+  if (!resp.ok) {
+    throw new Error(`Failed to fetch results: HTTP ${resp.status}`);
+  }
+  return await resp.json();
+}
+
+/** Retry temporary failed deliveries */
+export async function retryFailedDelivery(apiBaseUrl, deliveryId) {
+  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/delivery/${deliveryId}/retry`, {
+    method: 'POST',
+    headers: { Accept: 'application/json' },
+  });
+  if (!resp.ok) {
+    throw new Error(`Failed to retry: HTTP ${resp.status}`);
+  }
+  return await resp.json();
+}
+
+/** Download CSV delivery report */
+export async function downloadDeliveryReport(apiBaseUrl, deliveryId) {
+  const url = `${apiBaseUrl.replace(/\/$/, '')}/api/delivery/${deliveryId}/report`;
+  const resp = await fetch(url);
+  if (!resp.ok) {
+    throw new Error(`Failed to download report: HTTP ${resp.status}`);
+  }
+  const blob = await resp.blob();
+  const downloadUrl = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = downloadUrl;
+  a.download = `delivery_report_${deliveryId}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+}

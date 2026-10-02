@@ -1,214 +1,176 @@
-# Certify — Minimal Bulk Certificate Generator
+# Certify — Bulk Certificate Generator & Multi-Channel Delivery Platform
 
-**Certify** is a 100% client-side web application for generating customized, high-resolution bulk certificates from an image template and a participant spreadsheet (`.xlsx`, `.xls`, `.csv`).
-
-Designed as a **minimal editorial document editor**: warm white workspace, crisp typography, restrained indigo accents, and subtle borders. All data processing is strictly client-side—no backend, no database, no accounts, and no data uploaded to external servers.
+**Certify** is a modern certificate generation and automated multi-channel delivery platform. It pairs a **100% client-side React visual certificate designer** with a **stateless FastAPI delivery queue backend** supporting official **Meta WhatsApp Cloud API**, **SMTP Email delivery**, and **ZIP export fallback**.
 
 ---
 
-## ✨ Features
-
-- **100% Client-Side Privacy**: Templates, participant rosters, and generated PDFs remain strictly in your browser memory.
-- **Visual Drag & Drop Editor**: Position fields naturally on your template with 8-point resize handles and 360° rotation.
-- **Normalized Coordinate System**: Coordinates are stored as percentages (`x`, `y`, `width`, `height` from `0.0` to `1.0`), ensuring an exact 1:1 visual match between browser preview and final exported PDF.
-- **Smart Text Auto-Fit**: Automatically reduces font size smoothly when long participant names or department titles would otherwise overflow the text box.
-- **Compact Floating Toolbar**: Contextual formatting controls (Font family, Size, Bold, Italic, Alignment, Text Color, Letter Spacing, Auto-Fit toggle, Rotation, Delete) with zero distracting sidebars.
-- **27 Curated Google Fonts**: Categorized into Sans-Serif, Serif, Display, and Handwriting / Script with real-font search previews.
-- **SheetJS Spreadsheet Parsing**: Supports `.xlsx`, `.xls`, and `.csv` files.
-- **Automatic Column Matching**: Intelligently matches fields to spreadsheet headers (e.g., `Name` → `Participant Name`, `Reg No` → `Roll Number`, `Dept` → `Department`), falling back to a concise mapping dialog only when ambiguous.
-- **Complete Certificate Preview**:
-  - **Single Preview**: Canvas view with Previous/Next navigation, direct jump-to index, and participant metadata summary.
-  - **Grid View**: Clean thumbnail grid displaying all participant certificates.
-- **Multi-Format Export**:
-  - **Export All (ZIP Archive)**: Generates individual sanitized PDFs bundled into a single ZIP archive.
-  - **Export Combined PDF**: Generates a single multi-page PDF document containing all certificates.
-- **Scalable Performance**: Yields to the browser event loop during batch rendering to comfortably process large rosters without freezing the tab.
-
----
-
-## 🚀 Workflow
-
-1. **Open Certify**: Open the application in your browser.
-2. **Upload Certificate Template**: Upload your certificate background image (`.png`, `.jpg`, `.jpeg`).
-3. **Position the Fields**: Add, drag, resize, rotate, and style your certificate fields (Name, Reg No, Department, S.No, Event Name, Date, Custom).
-4. **Upload Participant Excel**: Upload your participant file (`.xlsx`, `.xls`, or `.csv`).
-5. **Generate Certificates**: Confirm and generate certificates with automatic column mapping.
-6. **Review the Certificates**: Inspect all generated certificates in Single Preview or Grid View.
-7. **Export**: Export all certificates as a ZIP archive of individual PDFs or as a combined multi-page PDF document.
-
----
-
-## 🛠 Technology Stack
-
-- **HTML5**: Semantic layout
-- **Tailwind CSS**: Utility styling with custom design tokens
-- **Vanilla JavaScript (ES6+)**: Modular client-side architecture
-- **SheetJS (`xlsx`)**: Browser-side Excel/CSV parsing
-- **jsPDF**: High-resolution PDF document creation matching template dimensions
-- **JSZip**: Bulk archive creation
-- **Google Fonts**: Open-licensed typography
-
----
-
-## 📂 Project Structure
+## 🌟 Key Architecture & Capabilities
 
 ```text
-Spectrum-Certificates/
-├── index.html       # Main application layout and modal shells
-├── app.js           # Modular Vanilla JS application logic
-├── style.css        # Minimal editorial styles & canvas handling
-└── README.md        # Project documentation
+                    CERTIFY
+                       │
+                Generate Certificates
+                       │
+                       ▼
+                 Delivery Center
+                       │
+          ┌────────────┼────────────┐
+          │            │            │
+          ▼            ▼            ▼
+      WhatsApp       Email      ZIP Download
+          │            │            │
+          └────────────┼────────────┘
+                       ▼
+                Delivery Queue
+          (Rate control · Concurrency)
+                       │
+                       ▼
+            Retry & Transient Recovery
+          (429 · Timeouts · Backoff)
+                       │
+                       ▼
+               Final CSV Report
 ```
+
+### Frontend (React.js + Tailwind CSS)
+* **Visual Certificate Editor**: Drag, 8-point resize handles, and 360° rotation with angle snapping.
+* **Smart Auto-Fit**: Dynamically scales typography when participant names overflow.
+* **Curated Typography**: 27 categorized Google Fonts (Sans-serif, Serif, Display, Handwriting).
+* **Excel / CSV Import**: SheetJS parser with automatic fuzzy column detection for `Name`, `Reg No`, `Department`, `WhatsApp Phone`, and `Email`.
+* **Previews**: Interactive Single Preview carousel and thumbnail Grid View.
+* **Persistent Session**: Auto-saved to `localStorage` and `IndexedDB`—refreshing never loses your work.
+
+### Backend (Python FastAPI)
+* **No Database**: Stateless in-memory queue. No credentials, recipient data, or certificates are stored permanently.
+* **Multi-Channel Delivery**:
+  * **WhatsApp**: Official Meta WhatsApp Business Cloud API with temporary in-memory media upload.
+  * **Email**: SMTP dispatch with TLS/SSL, customizable subject/body, and PDF attachment.
+  * **Fallback**: Automatic fallback to Email when a participant's WhatsApp delivery fails.
+* **Controlled Concurrency & Rate Limiting**: Inter-job delays (`DELIVERY_DELAY_MS`) and dynamic 429 backoff.
+* **Smart Retry System**: Exponential backoff for transient network errors and rate limits; permanent failures (invalid numbers/emails) are never endlessly retried.
+* **Auditing & Reporting**: Generates a downloadable CSV report for every delivery run.
 
 ---
 
-## 🌐 Deploy to GitHub Pages
+## 🚀 Quick Start Guide
 
-1. Push this repository to your GitHub account:
-   ```bash
-   git init
-   git add .
-   git commit -m "Certify application"
-   git branch -M main
-   git remote add origin https://github.com/<your-username>/<repo-name>.git
-   git push -u origin main
-   ```
-2. In your GitHub repository:
-   - Go to **Settings** → **Pages**.
-   - Under **Build and deployment**, set **Source** to `Deploy from a branch`.
-   - Select branch `main` and folder `/ (root)`.
-   - Click **Save**.
-3. Your app is live at `https://<your-username>.github.io/<repo-name>/`!
+### Prerequisites
+* **Node.js** (v18+)
+* **Python** (v3.10+)
 
----
-
-## 💻 Running Locally
-
-Simply serve the root folder with any static HTTP server:
-
-```bash
-# Using Python
-python -m http.server 8000
-
-# Using Node.js (npx)
-npx serve .
-```
-
-Open `http://localhost:8000` in your web browser.
-
----
-
-## 📱 WhatsApp Certificate Delivery
-
-Certify includes an optional backend that delivers each participant's certificate directly to their WhatsApp using the **official WhatsApp Business Cloud API (Meta)**.
-
-> The frontend (GitHub Pages) continues to work for generation and export **even if the backend is not running**.
-
-### Architecture
-
-```
-Certify Frontend (GitHub Pages)
-       ↓ HTTPS
-Certify Backend (FastAPI — your server)
-       ↓ HTTPS
-WhatsApp Business Cloud API (Meta)
-       ↓
-Individual participants
-```
-
-### 1. Prerequisites
-
-- A **Meta Developer account** with a WhatsApp Business App
-- A **WhatsApp Business Account** and approved phone number
-- A pre-approved **message template** (e.g. `certificate_delivery`)
-
-### 2. Backend Setup
-
-```bash
+### 1. Start the FastAPI Backend
+```powershell
 cd backend
-
-# Create virtual environment
 python -m venv .venv
-
-# Activate (Windows)
-.venv\Scripts\activate
-
-# Activate (macOS / Linux)
-source .venv/bin/activate
-
-# Install dependencies
+.venv\Scripts\activate       # On Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env
+uvicorn app.main:app --reload --port 8001
 ```
+* Backend health check: [http://localhost:8001/health](http://localhost:8001/health)
+* Interactive Swagger documentation: [http://localhost:8001/docs](http://localhost:8001/docs)
 
-### 3. Configure Environment Variables
-
-```bash
-# Copy the example file
-copy .env.example .env     # Windows
-cp .env.example .env       # macOS / Linux
-
-# Edit .env with your real credentials
+### 2. Start the React Frontend
+In a second terminal:
+```powershell
+cd frontend
+npm install
+npm run dev
 ```
+* Web application: [http://localhost:5173](http://localhost:5173)
 
-Required values in `backend/.env`:
+---
+
+## ⚙️ Configuration & Environment Variables
+
+Create a `.env` file in the `backend/` directory by copying `.env.example`:
 
 ```env
-WHATSAPP_ACCESS_TOKEN=your_token
+# ===============================
+# 1. WHATSAPP CLOUD API
+# ===============================
+WHATSAPP_ACCESS_TOKEN=your_meta_system_user_token
 WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id
+WHATSAPP_BUSINESS_ACCOUNT_ID=your_waba_id
 WHATSAPP_API_VERSION=v19.0
 CERTIFICATE_TEMPLATE_NAME=certificate_delivery
 CERTIFICATE_TEMPLATE_LANGUAGE=en
-WHATSAPP_TEST_MODE=false
-ALLOWED_ORIGINS=https://your-username.github.io
+
+# Set to true for local testing without calling Meta API:
+WHATSAPP_TEST_MODE=true
+
+# ===============================
+# 2. EMAIL (SMTP)
+# ===============================
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=your_email@gmail.com
+SMTP_PASSWORD=your_app_password
+SMTP_FROM_EMAIL=your_email@gmail.com
+SMTP_FROM_NAME=Certify
+SMTP_USE_TLS=true
+
+# Set to true for local testing without sending actual emails:
+EMAIL_TEST_MODE=true
+
+# ===============================
+# 3. DELIVERY QUEUE
+# ===============================
+MAX_DELIVERY_RETRIES=3
+DELIVERY_CONCURRENCY=1
+DELIVERY_DELAY_MS=500
+DELIVERY_SIMULATE_FAILURE_RATE=0.0
+MAX_CERTIFICATE_SIZE_MB=10
+
+# ===============================
+# 4. CORS
+# ===============================
+ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 ```
 
-### 4. Running Locally
+---
 
-**Terminal 1 — Frontend:**
-```bash
-python -m http.server 8000
-```
+## 📱 Meta WhatsApp Setup
 
-**Terminal 2 — Backend:**
-```bash
+1. Log into [Meta for Developers](https://developers.facebook.com/) and create a **Business** application.
+2. Add the **WhatsApp** product.
+3. Under **API Setup**, retrieve your:
+   * **Temporary access token** (or create a permanent System User Token under Business Settings > System Users).
+   * **Phone number ID**.
+4. In development mode with Meta test numbers, add recipient phone numbers to the **"To" list** under **Manage phone number list**.
+5. Set `WHATSAPP_TEST_MODE=false` in `backend/.env` to send live WhatsApp messages.
+
+---
+
+## 📧 SMTP Email Setup
+
+Certify works with any standard SMTP provider:
+* **Gmail**: Set `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_USE_TLS=true`. Generate a 16-character **App Password** under Google Account > Security > 2-Step Verification > App passwords.
+* **Institutional / College SMTP**: Set `SMTP_HOST` to your university's mail relay host.
+* **Transactional Email**: Compatible with AWS SES (`email-smtp.*.amazonaws.com`), SendGrid (`smtp.sendgrid.net`), or Mailgun.
+* Set `EMAIL_TEST_MODE=false` in `backend/.env` to dispatch live emails.
+
+---
+
+## 🧪 Testing
+
+Run backend unit and integration tests:
+```powershell
 cd backend
 .venv\Scripts\activate
-uvicorn app.main:app --reload --port 8001
+python tests/test_delivery.py
 ```
 
-Open: `http://localhost:8000`  
-Backend API: `http://localhost:8001`  
-API Docs: `http://localhost:8001/docs`
+Test coverage includes:
+* Indian phone normalization (`9092957457`, `09092957457`, `+919092957457` → `919092957457`) & international E.164.
+* Email syntax and domain normalization.
+* Retry classification (429, timeouts, 500s vs permanent invalid contacts).
+* Preflight validation, queue orchestration, fallback delivery, and CSV report streaming.
 
-### 5. Test Mode
+---
 
-During development, set `WHATSAPP_TEST_MODE=true` in `backend/.env`. The backend will validate payloads and simulate delivery without sending real WhatsApp messages.
+## 🔒 Security Principles
 
-### 6. Sending Certificates
-
-1. Upload template → Position fields → Upload Excel → Generate
-2. On the Preview page, click **Send All via WhatsApp**
-3. Review the validation summary (valid / missing / invalid phones)
-4. Enter your backend URL (default: `http://localhost:8001`)
-5. Click **Start Sending** — progress is shown in real time
-6. After completion, failed deliveries are listed and can be **Retried**
-
-### 7. Production Deployment
-
-The backend is a standard ASGI FastAPI application. Deploy it to any platform supporting Python:
-
-- **Railway, Render, Fly.io**: Push `backend/` as a standalone project
-- **Docker**: `uvicorn app.main:app --host 0.0.0.0 --port 8001`
-- **Cloud VPS**: Use `uvicorn` behind `nginx` with HTTPS
-
-After deployment, set `ALLOWED_ORIGINS` to your GitHub Pages domain only (no wildcards).
-
-### 8. Security
-
-| Concern | Mitigation |
-|---------|-----------|
-| Access token in frontend | ❌ Never — token is backend-only |
-| `.env` committed to Git | ❌ Protected by `.gitignore` |
-| CORS unrestricted | ❌ Set `ALLOWED_ORIGINS` to your Pages URL only |
-| Participant data stored | ❌ Never — all processing is in-memory |
-| Certificate stored on server | ❌ Never — PDF bytes are discarded after sending |
+* **No Credentials in Frontend**: Tokens and passwords exist strictly in `backend/.env`.
+* **Zero Database Exposure**: Certificates and participant rosters are processed in memory and never persisted on server disks.
+* **Official APIs Only**: Strictly uses official Meta Cloud API and standard SMTP protocols. No browser automation or scraping.

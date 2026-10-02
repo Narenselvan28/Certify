@@ -1,6 +1,7 @@
 // Column mapping fuzzy-matching utilities
 
 import { PHONE_ALIASES } from './phone.js';
+import { EMAIL_ALIASES } from './email.js';
 
 /** Fuzzy alias tables per field type */
 const ALIASES = {
@@ -11,6 +12,7 @@ const ALIASES = {
   event_name: ['event', 'event name', 'activity', 'workshop', 'programme', 'program', 'competition'],
   date:       ['date', 'event date', 'date of event', 'programme date'],
   phone:      PHONE_ALIASES,
+  email:      EMAIL_ALIASES,
   custom:     [],
 };
 
@@ -47,6 +49,13 @@ export function autoMapFields(fields, headers) {
  */
 export function detectPhoneColumn(headers) {
   return headers.find(h => PHONE_ALIASES.includes(normalize(h))) || null;
+}
+
+/**
+ * Detect the email column from available headers without requiring a placed email field.
+ */
+export function detectEmailColumn(headers) {
+  return headers.find(h => EMAIL_ALIASES.includes(normalize(h))) || null;
 }
 
 /**
