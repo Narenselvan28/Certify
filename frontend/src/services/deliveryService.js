@@ -26,9 +26,43 @@ export function getParticipantEmail(row, fields, mappings, emailColumn) {
   return '';
 }
 
+let cachedBackendUrl = null;
+
+export async function getActiveBackendUrl(preferredUrl) {
+  if (cachedBackendUrl) {
+    try {
+      const resp = await fetch(`${cachedBackendUrl}/health`, { signal: AbortSignal.timeout(1000) });
+      if (resp.ok) return cachedBackendUrl;
+    } catch (_) {
+      cachedBackendUrl = null;
+    }
+  }
+
+  const candidates = [
+    preferredUrl,
+    'http://localhost:8000',
+    'http://127.0.0.1:8000',
+    'http://localhost:8001',
+    'http://127.0.0.1:8001',
+  ].filter(Boolean);
+
+  for (const raw of Array.from(new Set(candidates))) {
+    const url = raw.replace(/\/$/, '');
+    try {
+      const resp = await fetch(`${url}/health`, { signal: AbortSignal.timeout(1200) });
+      if (resp.ok) {
+        cachedBackendUrl = url;
+        return url;
+      }
+    } catch (_) {}
+  }
+  return preferredUrl ? preferredUrl.replace(/\/$/, '') : 'http://localhost:8000';
+}
+
 /** Check Brevo connection & configuration status */
 export async function fetchEmailStatus(apiBaseUrl) {
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/email/status`, {
+  const url = await getActiveBackendUrl(apiBaseUrl);
+  const resp = await fetch(`${url}/api/email/status`, {
     headers: { Accept: 'application/json' },
   });
   if (!resp.ok) {
@@ -39,7 +73,8 @@ export async function fetchEmailStatus(apiBaseUrl) {
 
 /** Send single test email via Brevo */
 export async function sendTestEmail(apiBaseUrl, recipientEmail, recipientName = 'Admin Tester') {
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/email/test`, {
+  const url = await getActiveBackendUrl(apiBaseUrl);
+  const resp = await fetch(`${url}/api/email/test`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({
@@ -56,7 +91,8 @@ export async function sendTestEmail(apiBaseUrl, recipientEmail, recipientName = 
 
 /** Preflight validation request */
 export async function validateDelivery(apiBaseUrl, participants) {
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/delivery/validate`, {
+  const url = await getActiveBackendUrl(apiBaseUrl);
+  const resp = await fetch(`${url}/api/delivery/validate`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({ participants }),
@@ -70,7 +106,8 @@ export async function validateDelivery(apiBaseUrl, participants) {
 
 /** Start a bulk delivery background queue */
 export async function startDelivery(apiBaseUrl, participants) {
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/delivery/start`, {
+  const url = await getActiveBackendUrl(apiBaseUrl);
+  const resp = await fetch(`${url}/api/delivery/start`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify({ participants }),
@@ -84,7 +121,8 @@ export async function startDelivery(apiBaseUrl, participants) {
 
 /** Poll real-time status of active delivery queue */
 export async function getDeliveryStatus(apiBaseUrl, deliveryId) {
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/delivery/${deliveryId}/status`, {
+  const url = await getActiveBackendUrl(apiBaseUrl);
+  const resp = await fetch(`${url}/api/delivery/${deliveryId}/status`, {
     headers: { Accept: 'application/json' },
   });
   if (!resp.ok) {
@@ -95,7 +133,8 @@ export async function getDeliveryStatus(apiBaseUrl, deliveryId) {
 
 /** Get final breakdown and results */
 export async function getDeliveryResults(apiBaseUrl, deliveryId) {
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/delivery/${deliveryId}/results`, {
+  const url = await getActiveBackendUrl(apiBaseUrl);
+  const resp = await fetch(`${url}/api/delivery/${deliveryId}/results`, {
     headers: { Accept: 'application/json' },
   });
   if (!resp.ok) {
@@ -106,7 +145,8 @@ export async function getDeliveryResults(apiBaseUrl, deliveryId) {
 
 /** Retry temporary failed deliveries */
 export async function retryFailedDelivery(apiBaseUrl, deliveryId) {
-  const resp = await fetch(`${apiBaseUrl.replace(/\/$/, '')}/api/delivery/${deliveryId}/retry`, {
+  const url = await getActiveBackendUrl(apiBaseUrl);
+  const resp = await fetch(`${url}/api/delivery/${deliveryId}/retry`, {
     method: 'POST',
     headers: { Accept: 'application/json' },
   });
@@ -118,8 +158,8 @@ export async function retryFailedDelivery(apiBaseUrl, deliveryId) {
 
 /** Download CSV delivery report */
 export async function downloadDeliveryReport(apiBaseUrl, deliveryId) {
-  const url = `${apiBaseUrl.replace(/\/$/, '')}/api/delivery/${deliveryId}/report`;
-  const resp = await fetch(url);
+  const url = await getActiveBackendUrl(apiBaseUrl);
+  const resp = await fetch(`${url}/api/delivery/${deliveryId}/report`);
   if (!resp.ok) {
     throw new Error(`Failed to download report: HTTP ${resp.status}`);
   }
